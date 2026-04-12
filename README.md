@@ -88,3 +88,4 @@ Settings are defined as constants at the top of `parse_job.py`:
 
 > [!IMPORTANT]
 > Never commit `linkedin_session/` — it contains your personal LinkedIn auth cookies.
+# multi-agent-data-miner
