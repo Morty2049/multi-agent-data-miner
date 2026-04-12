@@ -77,15 +77,4 @@ Settings are defined as constants at the top of `parse_job.py`:
 | `SESSION_DIR` | `linkedin_session/` | Persistent Chromium user data (cookies, auth state) |
 | `VAULT_BASE` | `obsidian_vault/` | Root path for all output Markdown files |
 
----
 
-## 🛡️ Anti-Detection
-
-- **Persistent session**: Reuses a real Chromium profile with cookies from `linkedin_session/`.
-- **Randomized delays**: Human-like pauses between page actions.
-- **Show more**: Auto-clicks "Show more" buttons to expand full job descriptions.
-- **Lazy loading**: Auto-scrolls to trigger LinkedIn's dynamic content.
-
-> [!IMPORTANT]
-> Never commit `linkedin_session/` — it contains your personal LinkedIn auth cookies.
-# multi-agent-data-miner
