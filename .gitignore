@@ -1,0 +1,32 @@
+# Среда выполнения
+.env
+__pycache__/
+*.pyc
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Логи и временные файлы
+*.log
+tmp/
+.DS_Store
+
+# Учетные данные и сессии (ОЧЕНЬ ВАЖНО)
+sessions/
+cookies/
+*.json # Если в json будут храниться токены, лучше исключить, либо исключать конкретные
+
+# Данные майнинга и Obsidian Vault
+obsidian_vault/
+linkedin_session/
+data/
+code-references/
+
+# Архитектура:
+arch/
+ADR.md
+ARCHITECTURE.md
+FUNCTIONAL_REQUIREMENTS.md
+history.md
