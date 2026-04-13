@@ -9,12 +9,12 @@ Usage:
     venv/bin/python skills_miner_adk.py                   # process all
     venv/bin/python skills_miner_adk.py --limit 5          # test on 5
     venv/bin/python skills_miner_adk.py --dry-run          # preview only
+    venv/bin/python skills_miner_adk.py --concurrency 3    # parallel workers (default 3)
 """
 import asyncio
 import json
 import os
 import sys
-import time
 
 from dotenv import load_dotenv
 
@@ -31,7 +31,11 @@ import skills_tools
 # ---------------------------------------------------------------------------
 
 MODEL = "gemini-2.5-flash-lite"
-DELAY_BETWEEN_VACANCIES = 1.5  # seconds, for rate limiting
+CONCURRENCY = 3        # parallel LLM extraction workers
+MAX_RETRIES = 3        # JSON parse retries per agent call
+RETRY_BASE_DELAY = 2   # seconds, doubles each retry
+
+CHECKPOINTS_DIR = os.path.join("data", "checkpoints")
 
 # ---------------------------------------------------------------------------
 # Agent instructions
@@ -157,112 +161,167 @@ async def run_agent_once(runner: InMemoryRunner, message: str, user_id: str, ses
 
 
 
-def parse_json_response(text: str) -> any:
-    """Parse JSON from LLM response, handling markdown fences."""
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences from LLM response."""
     text = text.strip()
-    # Remove markdown code fences if present
     if text.startswith("```"):
         lines = text.split("\n")
-        # Remove first and last lines (fences)
         lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
+        text = "\n".join(lines).strip()
+    return text
+
+
+def parse_json_response(text: str) -> any:
+    """Parse JSON from LLM response, handling markdown fences."""
+    text = _strip_fences(text)
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
         print(f"  ⚠️  JSON parse error: {e}")
-        print(f"  Raw response: {text[:200]}...")
+        print(f"  Raw response: {text[:300]}...")
         return None
 
 
-async def process_vacancy(
+async def run_agent_with_retry(
+    runner: InMemoryRunner,
+    message: str,
+    user_id: str,
+    session_id: str,
+    expected_type: type,
+) -> any:
+    """Run agent and retry up to MAX_RETRIES times if JSON is invalid."""
+    for attempt in range(MAX_RETRIES):
+        raw = await run_agent_once(runner, message, user_id, session_id)
+        parsed = parse_json_response(raw)
+        if parsed is not None and isinstance(parsed, expected_type):
+            return parsed
+        if attempt < MAX_RETRIES - 1:
+            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            print(f"  ⚠️  Retry {attempt + 1}/{MAX_RETRIES - 1} in {delay}s...")
+            await asyncio.sleep(delay)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Checkpoints — persist extraction results for resume on crash
+# ---------------------------------------------------------------------------
+
+def _checkpoint_path(filename: str) -> str:
+    os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
+    return os.path.join(CHECKPOINTS_DIR, filename.replace(".md", ".json"))
+
+
+def save_checkpoint(filename: str, approved: list, new_synonyms: list):
+    with open(_checkpoint_path(filename), "w", encoding="utf-8") as f:
+        json.dump({"approved": approved, "new_synonyms": new_synonyms}, f, ensure_ascii=False)
+
+
+def load_checkpoint(filename: str) -> tuple[list, list] | None:
+    path = _checkpoint_path(filename)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("approved", []), data.get("new_synonyms", [])
+    return None
+
+
+def clear_checkpoint(filename: str):
+    path = _checkpoint_path(filename)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+async def extract_vacancy(
     filename: str,
     extractor_runner: InMemoryRunner,
     reviewer_runner: InMemoryRunner,
-    dry_run: bool = False,
+    semaphore: asyncio.Semaphore,
+) -> tuple[str, list, list] | None:
+    """Phase 1 (parallelizable): LLM extraction only. Returns (filename, approved, new_synonyms)."""
+    async with semaphore:
+        # Check checkpoint first — resume after crash
+        cached = load_checkpoint(filename)
+        if cached is not None:
+            approved, new_synonyms = cached
+            print(f"  ♻️  [{filename}] Resuming from checkpoint ({len(approved)} skills)")
+            return filename, approved, new_synonyms
+
+        print(f"\n  🔍 [{filename}] Agent 1: extracting...")
+        content = skills_tools.read_vacancy(filename)
+        if content.startswith("ERROR"):
+            print(f"  ❌ [{filename}] {content}")
+            return None
+
+        extracted = await run_agent_with_retry(
+            extractor_runner,
+            f"Extract skills from this vacancy:\n\n{content}",
+            user_id="miner",
+            session_id=f"extract_{filename}",
+            expected_type=list,
+        )
+        if extracted is None:
+            print(f"  ❌ [{filename}] Extractor failed after {MAX_RETRIES} retries")
+            return None
+
+        if not extracted:
+            return filename, [], []
+
+        print(f"  🧠 [{filename}] Agent 2: reviewing {len(extracted)} skills...")
+        # Send compact graph (names only) + synonyms for reviewer context
+        graph_names = json.loads(skills_tools.get_graph_state())
+        synonyms = json.loads(skills_tools.get_synonyms())
+
+        reviewer_message = json.dumps({
+            "extracted_skills": extracted,
+            "existing_skill_names": graph_names,
+            "synonyms": synonyms,
+        }, ensure_ascii=False)
+
+        reviewed = await run_agent_with_retry(
+            reviewer_runner,
+            f"Review these extracted skills:\n\n{reviewer_message}",
+            user_id="miner",
+            session_id=f"review_{filename}",
+            expected_type=dict,
+        )
+        if reviewed is None:
+            print(f"  ❌ [{filename}] Reviewer failed after {MAX_RETRIES} retries")
+            return None
+
+        approved = reviewed.get("approved_skills", [])
+        new_synonyms = reviewed.get("new_synonyms", [])
+        rejected = reviewed.get("rejected_skills", [])
+
+        print(f"  ✅ [{filename}] Approved: {len(approved)} | Rejected: {len(rejected)}")
+        save_checkpoint(filename, approved, new_synonyms)
+        return filename, approved, new_synonyms
+
+
+def apply_vacancy_results(
+    filename: str,
+    approved: list,
+    new_synonyms: list,
+    dry_run: bool,
+    idx: int,
+    total: int,
 ) -> bool:
-    """Process a single vacancy through the two-agent pipeline."""
-    print(f"\n{'='*60}")
-    print(f"📄 Processing: {filename}")
-    print(f"{'='*60}")
-
-    # Step 1: Read vacancy
-    content = skills_tools.read_vacancy(filename)
-    if content.startswith("ERROR"):
-        print(f"  ❌ {content}")
-        return False
-
-    # Step 2: Extract skills (Agent 1)
-    print("  🔍 Agent 1 (Extractor): Analyzing vacancy...")
-    extractor_response = await run_agent_once(
-        extractor_runner,
-        f"Extract skills from this vacancy:\n\n{content}",
-        user_id="miner",
-        session_id=f"extract_{filename}",
-    )
-
-    extracted = parse_json_response(extractor_response)
-    if extracted is None or not isinstance(extracted, list):
-        print(f"  ❌ Extractor returned invalid data, skipping")
-        return False
-
-    print(f"  ✅ Extracted {len(extracted)} skills: {[s.get('skill','?') for s in extracted]}")
-
-    if not extracted:
-        print("  ℹ️  No skills found, marking as processed")
-        if not dry_run:
-            skills_tools.mark_processed(filename)
-        return True
-
-    # Step 3: Review skills (Agent 2)
-    print("  🧠 Agent 2 (Reviewer): Validating against graph...")
-    graph_state = skills_tools.get_graph_state()
-    synonyms = skills_tools.get_synonyms()
-
-    reviewer_message = json.dumps({
-        "extracted_skills": extracted,
-        "graph_state": json.loads(graph_state),
-        "synonyms": json.loads(synonyms),
-    }, ensure_ascii=False)
-
-    reviewer_response = await run_agent_once(
-        reviewer_runner,
-        f"Review these extracted skills:\n\n{reviewer_message}",
-        user_id="miner",
-        session_id=f"review_{filename}",
-    )
-
-    reviewed = parse_json_response(reviewer_response)
-    if reviewed is None or not isinstance(reviewed, dict):
-        print(f"  ❌ Reviewer returned invalid data, skipping")
-        return False
-
-    approved = reviewed.get("approved_skills", [])
-    rejected = reviewed.get("rejected_skills", [])
-    new_synonyms = reviewed.get("new_synonyms", [])
-
-    print(f"  ✅ Approved: {len(approved)} | Rejected: {len(rejected)}")
-    if rejected:
-        print(f"     Rejected: {[r.get('skill','?') for r in rejected]}")
+    """Phase 2 (sequential): apply LLM results to vault files."""
+    print(f"\n[{idx}/{total}] 📝 Applying: {filename}")
 
     if dry_run:
-        print("  🏃 DRY RUN — would apply:")
         for skill in approved:
-            print(f"     Link: '{skill['original']}' → [[{skill['canonical']}]]")
-            print(f"     Skill note: {skill['canonical']} (parent: {skill.get('parent', [])})")
+            print(f"     DRY: '{skill['original']}' → [[{skill['canonical']}]]")
         return True
 
-    # Step 4: Apply changes
-    print("  📝 Applying changes...")
+    if not approved:
+        skills_tools.mark_processed(filename)
+        return True
 
-    # 4a. Insert wikilinks into vacancy
-    replacements = [
-        {"original": s["original"], "canonical": s["canonical"]}
-        for s in approved
-    ]
-    link_result = skills_tools.insert_wikilinks(filename, replacements)
-    print(f"     {link_result}")
+    # Insert wikilinks into vacancy
+    replacements = [{"original": s["original"], "canonical": s["canonical"]} for s in approved]
+    print(f"     {skills_tools.insert_wikilinks(filename, replacements)}")
 
-    # 4b. Create/update skill notes
+    # Create/update skill notes
     for skill in approved:
         result = skills_tools.upsert_skill(
             name=skill["canonical"],
@@ -274,18 +333,15 @@ async def process_vacancy(
         )
         print(f"     {result}")
 
-    # 4c. Add new synonyms
+    # Add new synonyms
     for syn in new_synonyms:
-        abbrev = syn.get("abbreviation")
-        canon = syn.get("canonical")
+        abbrev, canon = syn.get("abbreviation"), syn.get("canonical")
         if abbrev and canon:
-            result = skills_tools.add_synonym(abbrev, canon)
-            print(f"     {result}")
+            print(f"     {skills_tools.add_synonym(abbrev, canon)}")
 
-
-    # 4d. Mark as processed
     skills_tools.mark_processed(filename)
-    print(f"  ✅ Done: {filename}")
+    clear_checkpoint(filename)
+    print(f"     ✅ Done")
     return True
 
 
@@ -297,61 +353,78 @@ async def main():
     # Parse CLI args
     limit = 0
     dry_run = False
-    for i, arg in enumerate(sys.argv[1:]):
-        if arg == "--limit" and i + 1 < len(sys.argv) - 1:
-            limit = int(sys.argv[i + 2])
+    concurrency = CONCURRENCY
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--limit" and i + 1 < len(args):
+            limit = int(args[i + 1]); i += 2
         elif arg.startswith("--limit="):
-            limit = int(arg.split("=")[1])
+            limit = int(arg.split("=")[1]); i += 1
+        elif arg == "--concurrency" and i + 1 < len(args):
+            concurrency = int(args[i + 1]); i += 2
+        elif arg.startswith("--concurrency="):
+            concurrency = int(arg.split("=")[1]); i += 1
         elif arg == "--dry-run":
-            dry_run = True
+            dry_run = True; i += 1
+        else:
+            i += 1
 
-    # Check API key
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
+    if not os.environ.get("GOOGLE_API_KEY"):
         print("❌ GOOGLE_API_KEY not set. Create a .env file or export it.")
         sys.exit(1)
 
-    # Get unprocessed vacancies
     unprocessed = skills_tools.list_unprocessed_vacancies()
     total = len(unprocessed)
-    print(f"\n📊 Total vacancies: {total}")
+    print(f"\n📊 Total unprocessed vacancies: {total}")
 
     if limit:
         unprocessed = unprocessed[:limit]
-        print(f"   Processing limit: {limit}")
-
+        print(f"   Limit: {limit}")
     if dry_run:
         print("   Mode: DRY RUN (no files will be modified)")
+    print(f"   Concurrency: {concurrency} parallel workers")
 
     if not unprocessed:
         print("   ✅ All vacancies already processed!")
         return
 
-    # Create agents and runners
     extractor, reviewer = create_agents()
     extractor_runner = InMemoryRunner(agent=extractor, app_name="skills_miner_extractor")
     reviewer_runner = InMemoryRunner(agent=reviewer, app_name="skills_miner_reviewer")
 
-    # Process vacancies
-    success = 0
-    failed = 0
-    for i, filename in enumerate(unprocessed, 1):
-        print(f"\n[{i}/{len(unprocessed)}]", end="")
+    # Phase 1: parallel LLM extraction
+    print(f"\n🔍 Phase 1: Extracting skills from {len(unprocessed)} vacancies...")
+    semaphore = asyncio.Semaphore(concurrency)
+    tasks = [
+        extract_vacancy(f, extractor_runner, reviewer_runner, semaphore)
+        for f in unprocessed
+    ]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Phase 2: sequential apply (safe file writes, no concurrent graph corruption)
+    print(f"\n📝 Phase 2: Applying results to vault...")
+    success = failed = 0
+    for idx, result in enumerate(raw_results, 1):
+        if isinstance(result, Exception):
+            print(f"  ❌ [{unprocessed[idx-1]}] Exception: {result}")
+            failed += 1
+            continue
+        if result is None:
+            failed += 1
+            continue
+        filename, approved, new_synonyms = result
         try:
-            ok = await process_vacancy(filename, extractor_runner, reviewer_runner, dry_run)
+            ok = apply_vacancy_results(filename, approved, new_synonyms, dry_run, idx, len(unprocessed))
             if ok:
                 success += 1
             else:
                 failed += 1
         except Exception as e:
-            print(f"  ❌ Error processing {filename}: {e}")
+            print(f"  ❌ Error applying {filename}: {e}")
             failed += 1
 
-        # Rate limiting
-        if i < len(unprocessed):
-            time.sleep(DELAY_BETWEEN_VACANCIES)
-
-    # Summary
     print(f"\n{'='*60}")
     print(f"📊 Summary: {success} succeeded, {failed} failed out of {len(unprocessed)}")
     print(f"{'='*60}")

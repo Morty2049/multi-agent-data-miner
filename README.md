@@ -1,80 +1,263 @@
-# LinkedIn Data Miner 🕷️
+# LinkedIn Data Miner
 
-An autonomous pipeline to extract LinkedIn job vacancies and company metadata into structured Obsidian Markdown files.
-
-The system mimics human browsing behavior and uses a persistent browser session to parse job pages into bi-directionally linked `.md` files for an Obsidian knowledge graph.
+An autonomous pipeline that mines LinkedIn job vacancies into a structured Obsidian knowledge graph — with bi-directionally linked Vacancies, Companies, and Skills nodes.
 
 ---
 
-## 🚀 Quick Start
+## Pipeline Overview
+
+```
+LinkedIn (Playwright) ──► Vacancies/*.md  ──► Skills Miner (ADK)
+                      ──► Companies/*.md        │
+                                                ├─ Skills/*.md  ◄──► [[wikilinks]]
+                                                └─ skills_graph.json
+
+One-time cleanup:   reorganize_vault.py  (LLM dedup + cluster tags)
+Maintenance:        merge_skills.py      (rule-based dedup + link repair)
+```
+
+The system runs in three main phases:
+
+| Phase | Script | Description |
+|---|---|---|
+| 1. Collect | `collect_queue.py` | Scrape LinkedIn feed → `data/job_queue.json` |
+| 2. Parse | `run_queue.py` | Process queue → `Vacancies/` + `Companies/` files |
+| 3. Mine Skills | `skills_miner_adk.py` | Two-agent ADK pipeline → `Skills/` + wikilinks |
+
+Plus two maintenance utilities:
+
+| Script | Description |
+|---|---|
+| `reorganize_vault.py` | LLM-based vault reorganization (dedup, clustering, hierarchy) |
+| `merge_skills.py` | Rule-based dedup and broken link repair |
+
+---
+
+## Quick Start
 
 ### Prerequisites
-- Python 3.10+
-- Playwright (Chromium)
 
 ```bash
-# Setup environment
 python3 -m venv venv
 source venv/bin/activate
-pip install playwright
+pip install playwright python-dotenv google-adk
 playwright install chromium
 ```
 
-### Usage
+Create a `.env` file:
 
-**Parse a single job URL:**
-```bash
-venv/bin/python parse_job.py https://www.linkedin.com/jobs/view/123456789/
+```
+GOOGLE_API_KEY=your_key_here
 ```
 
-**Batch process a queue file:**
+### Phase 1 — Collect vacancy URLs
+
 ```bash
+venv/bin/python collect_queue.py
+# Scrolls LinkedIn Recommended Jobs → data/job_queue.json
+```
+
+### Phase 2 — Parse vacancies
+
+```bash
+# Process all queued URLs
 venv/bin/python run_queue.py data/job_queue.json
+
+# Or parse a single URL
+venv/bin/python parse_job.py https://www.linkedin.com/jobs/view/123456789/
+
+# Limit for testing
 venv/bin/python run_queue.py data/job_queue.json --limit 10
 ```
 
+### Phase 3 — Mine skills
+
+```bash
+# Dry-run preview (no files changed)
+venv/bin/python skills_miner_adk.py --limit 5 --dry-run
+
+# Process all unprocessed vacancies (3 parallel workers by default)
+venv/bin/python skills_miner_adk.py
+
+# Adjust concurrency
+venv/bin/python skills_miner_adk.py --concurrency 5
+```
+
+### Vault reorganization (run once, or after large batch)
+
+```bash
+# Step 1: Generate LLM-based reorganization plan
+venv/bin/python reorganize_vault.py --analyze
+
+# Review data/reorganize_manifest.json, then apply:
+venv/bin/python reorganize_vault.py --apply
+
+# Verify result
+venv/bin/python reorganize_vault.py --verify
+
+# Or all in one shot
+venv/bin/python reorganize_vault.py --analyze --apply --verify
+```
+
+### Maintenance (rule-based cleanup)
+
+```bash
+# Dry-run report: duplicates + broken links
+venv/bin/python merge_skills.py
+
+# Apply fixes (creates backup automatically)
+venv/bin/python merge_skills.py --apply
+
+# Rollback
+venv/bin/python merge_skills.py --restore
+```
+
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
-├── parse_job.py         # Core parser: single LinkedIn URL → Obsidian .md files
-├── run_queue.py         # Batch runner: processes a JSON list of URLs
+├── collect_queue.py        # Phase 1: Scrape LinkedIn feed → job_queue.json
+├── run_queue.py            # Phase 2: Batch processor for job_queue.json
+├── parse_job.py            # Core parser: single LinkedIn URL → Obsidian .md
+├── skills_miner_adk.py     # Phase 3: Two-agent ADK skills extraction pipeline
+├── skills_tools.py         # File I/O tools for the skills miner
+├── reorganize_vault.py     # LLM-based vault reorganization (dedup + clustering)
+├── merge_skills.py         # Rule-based dedup and broken link repair
+├── seed_graph.py           # Utility: rebuild skills_graph.json from Skills/
+├── fix_company_backlinks.py  # Utility: repair company → vacancy backlinks
+├── recover_parsed.py       # Utility: recover already-parsed vacancy files
+│
 ├── data/
-│   ├── job_queue.json           # Queue of URLs to process
-│   └── job_queue_prod_parsed.json  # Successfully processed URLs (auto-generated)
-└── obsidian_vault/              # Output (ignored by Git)
-    ├── Vacancies/               # One .md per job vacancy
-    └── Companies/               # One .md per company
+│   ├── job_queue.json              # URLs to process (Phase 2 input)
+│   ├── skills_graph.json           # Running skills graph state
+│   ├── skill_synonyms.json         # Abbreviation → canonical name dictionary
+│   ├── skills_mined.json           # Processed vacancy tracker (idempotency)
+│   ├── reorganize_manifest.json    # LLM reorganization plan (inspect before apply)
+│   └── checkpoints/                # Per-vacancy extraction checkpoints (crash recovery)
+│
+├── obsidian_vault/
+│   ├── Vacancies/          # One .md per job vacancy
+│   ├── Companies/          # One .md per company
+│   └── Skills/             # One .md per technical skill
+│
+├── arch/
+│   ├── ADR.md              # Architecture Decision Records
+│   ├── ARCHITECTURE.md     # System architecture overview
+│   ├── FUNCTIONAL_REQUIREMENTS.md
+│   └── history.md          # Development history log
+│
+└── linkedin_session/       # Persistent Chromium session (gitignored)
 ```
 
 ---
 
-## 🧠 Data Flow
+## Data Flow
 
 ```
-job_queue.json  →  run_queue.py  →  parse_job.py  →  Playwright (Chromium)
-                                                            ↓
-                              obsidian_vault/Vacancies/{Company}-{Title}.md
-                              obsidian_vault/Companies/{Company}.md
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 1: Collect                                            │
+│   collect_queue.py → Playwright → LinkedIn Recommended      │
+│   → data/job_queue.json                                     │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 2: Parse                                              │
+│   run_queue.py → parse_job.py → Playwright                  │
+│   → Vacancies/{Company}_{Title}_{ID}.md                     │
+│   → Companies/{Company}.md                                  │
+│   (bi-directional [[wikilinks]] between Vacancies ↔ Companies)│
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 3: Mine Skills (ADK)                                  │
+│                                                             │
+│  Vacancy .md                                                │
+│      │                                                      │
+│      ▼                                                      │
+│  Agent 1 (Extractor)  → raw JSON skill list                 │
+│      │                                                      │
+│      ▼                                                      │
+│  Agent 2 (Reviewer)   → normalized + validated skills       │
+│      │                                                      │
+│      ▼                                                      │
+│  skills_tools.py (Python)                                   │
+│      ├─ insert_wikilinks()   → Vacancy gets [[Skill]] links │
+│      ├─ upsert_skill()       → Skills/{Skill}.md created    │
+│      └─ mark_processed()     → added to skills_mined.json   │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼ (periodic / after batch)
+┌─────────────────────────────────────────────────────────────┐
+│ Maintenance                                                 │
+│   reorganize_vault.py  → LLM groups semantically            │
+│     equivalent skills, assigns cluster tags (#cloud, #ai…)  │
+│   merge_skills.py      → rule-based dedup + link repair     │
+│   seed_graph.py        → rebuild skills_graph.json          │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-1. **Extract**: Opens each URL in a persistent Chromium session.
-2. **Transform**: Custom JavaScript + Regex converts the LinkedIn DOM into clean Markdown.
-3. **Load**:
-    - Vacancy file with full job description and YAML frontmatter.
-    - Company file with overview, size, industry (visits the company's LinkedIn `/about/` page).
-    - **Bi-directional link**: `company: "[[Company Name]]"` connects Vacancies ↔ Companies in Obsidian.
 
 ---
 
-## ⚙️ Configuration
+## Skills Knowledge Graph
 
-Settings are defined as constants at the top of `parse_job.py`:
+Each skill file (`Skills/Kubernetes.md`) follows this structure:
 
-| Constant | Default | Description |
-| :--- | :--- | :--- |
-| `SESSION_DIR` | `linkedin_session/` | Persistent Chromium user data (cookies, auth state) |
-| `VAULT_BASE` | `obsidian_vault/` | Root path for all output Markdown files |
+```markdown
+---
+type: skill
+tags: [skill, #containers, #devops]
+---
+# Kubernetes
 
+## About
+Container orchestration platform for automating deployment and scaling.
 
+## Parent
+- [[Container Orchestration]]
+- [[DevOps]]
+
+## Children
+- [[GKE]]
+- [[EKS]]
+- [[AKS]]
+
+## Mentions
+- [[Acme_Corp_-_DevOps_Engineer_(4383250025)]]
+- [[Nokia_-_Solutions_Architect_(4377793741)]]
+```
+
+Vacancy files link to skills via Obsidian aliases:
+
+```markdown
+Experience with [[Kubernetes|K8s]] orchestration and [[CI/CD|CI_CD]] pipelines.
+```
+
+This creates a navigable graph: **Vacancy → Skill → Category → Child Skills**.
+
+---
+
+## Configuration
+
+| Constant | File | Default | Description |
+|---|---|---|---|
+| `SESSION_DIR` | `parse_job.py` | `linkedin_session/` | Persistent Chromium session |
+| `VAULT_BASE` | `parse_job.py` | `obsidian_vault/` | Output root |
+| `MODEL` | `skills_miner_adk.py` | `gemini-2.5-flash-lite` | ADK agent model |
+| `CONCURRENCY` | `skills_miner_adk.py` | `3` | Parallel extraction workers |
+| `MAX_RETRIES` | `skills_miner_adk.py` | `3` | JSON parse retries per agent |
+| `BATCH_SIZE` | `reorganize_vault.py` | `120` | Skills per LLM batch |
+
+---
+
+## Architecture Decisions
+
+See [arch/ADR.md](arch/ADR.md) for all Architecture Decision Records.
+
+Key decisions:
+- **Two-agent ADK pipeline** — Extractor + Reviewer prevents hallucinations from leaking into files
+- **Obsidian alias wikilinks** — `[[Canonical|Original]]` keeps vault readable while graph resolves correctly
+- **LLM-based reorganization** — `reorganize_vault.py` uses Gemini to detect semantic duplicates that rule-based normalization cannot (K8s = Kubernetes, CI_CD = CI/CD)
+- **Parallel extraction, sequential apply** — LLM calls run concurrently; file writes are always sequential to prevent graph corruption

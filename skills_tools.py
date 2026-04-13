@@ -7,6 +7,7 @@ Provides file I/O functions registered as ADK FunctionTools:
 - Creating/updating skill notes
 - Managing graph state and synonyms
 """
+import fcntl
 import json
 import os
 import re
@@ -19,6 +20,7 @@ DATA_DIR = os.path.abspath("data")
 GRAPH_PATH = os.path.join(DATA_DIR, "skills_graph.json")
 SYNONYMS_PATH = os.path.join(DATA_DIR, "skill_synonyms.json")
 MINED_PATH = os.path.join(DATA_DIR, "skills_mined.json")
+GRAPH_LOCK_PATH = os.path.join(DATA_DIR, "skills_graph.lock")
 
 os.makedirs(SKILLS_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -53,7 +55,11 @@ def load_graph() -> dict:
 
 
 def save_graph(graph: dict):
-    _save_json(GRAPH_PATH, graph)
+    """Atomic write: write to temp file then rename to avoid partial reads."""
+    tmp_path = GRAPH_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(graph, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, GRAPH_PATH)
 
 
 def load_mined() -> list:
@@ -87,15 +93,32 @@ def read_vacancy(filename: str) -> str:
 
 
 def get_graph_state() -> str:
-    """Returns the current skills graph as a JSON string for the reviewer agent."""
+    """Returns a compact skills graph for the reviewer agent.
+
+    Sends only skill names — avoids megabyte-sized payloads for large graphs.
+    The reviewer uses this to check canonical names and avoid duplicates.
+    """
     graph = load_graph()
-    # Return a compact summary: skill names + parents + children
-    summary = {}
-    for name, info in graph.get("skills", {}).items():
-        summary[name] = {
-            "parent": info.get("parent", []),
-            "children": info.get("children", []),
-        }
+    names = sorted(graph.get("skills", {}).keys())
+    return json.dumps(names, ensure_ascii=False)
+
+
+def get_graph_slice(skill_names: list[str]) -> str:
+    """Returns a subgraph slice for specific skills + their parents.
+
+    Used by the reviewer when it needs hierarchy context, not just name lookup.
+    """
+    graph = load_graph()
+    skills = graph.get("skills", {})
+    relevant = set(skill_names)
+    for name in list(relevant):
+        if name in skills:
+            relevant.update(skills[name].get("parent", []))
+    summary = {
+        name: {"parent": skills[name].get("parent", []), "children": skills[name].get("children", [])}
+        for name in sorted(relevant)
+        if name in skills
+    }
     return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
@@ -153,13 +176,12 @@ def insert_wikilinks(filename: str, replacements: list[dict]) -> str:
         else:
             wikilink = f"[[{canonical}|{original}]]"
 
-        # Replace only standalone occurrences (not inside existing [[ ]])
-        # Use word boundaries where possible
+        # Replace all standalone occurrences (not inside existing [[ ]])
         pattern = r'(?<!\[\[)(?<!\|)\b' + re.escape(original) + r'\b(?!\]\])(?!\|)'
-        new_body, count = re.subn(pattern, wikilink, body, count=1)
+        new_body, count = re.subn(pattern, wikilink, body)
         if count > 0:
             body = new_body
-            changes.append(f"  '{original}' → {wikilink}")
+            changes.append(f"  '{original}' → {wikilink} (×{count})")
 
     if changes:
         with open(path, "w", encoding="utf-8") as f:
@@ -191,7 +213,9 @@ def upsert_skill(
     vac_stem = vacancy_filename.replace(".md", "") if vacancy_filename.endswith(".md") else vacancy_filename
     mention_link = f"[[{vac_stem}]]"
 
-    # Update graph state
+    # Update graph state with exclusive file lock to prevent concurrent corruption
+    lock_file = open(GRAPH_LOCK_PATH, "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
     graph = load_graph()
     skills = graph.setdefault("skills", {})
 
@@ -210,24 +234,29 @@ def upsert_skill(
                 content = content.rstrip() + f"\n\n## Mentions\n- {mention_link}\n"
             action = "updated (added mention)"
 
-        # Merge parent/children into existing
+        # Merge parent links — create ## Parent section if missing
         for p in parent:
             p_link = f"[[{p}]]"
-            if p_link not in content and "## Parent" in content:
-                # Insert after ## Parent header
-                content = content.replace("## Parent\n", f"## Parent\n- {p_link}\n", 1)
+            if p_link not in content:
+                if "## Parent" in content:
+                    content = content.replace("## Parent\n", f"## Parent\n- {p_link}\n", 1)
+                else:
+                    # No Parent section — insert before ## Mentions (or at end)
+                    if "## Mentions" in content:
+                        content = content.replace("## Mentions", f"## Parent\n- {p_link}\n\n## Mentions", 1)
+                    else:
+                        content = content.rstrip() + f"\n\n## Parent\n- {p_link}\n"
 
+        # Merge children links — create ## Children section if missing
         for c in children:
             c_link = f"[[{c}]]"
-            if c_link not in content and "## Children" in content:
-                content = content.replace("## Children\n", f"## Children\n- {c_link}\n", 1)
-            elif c_link not in content and "## Children" not in content:
-                # Insert children section before ## Mentions
-                if "## Mentions" in content:
-                    content = content.replace(
-                        "## Mentions",
-                        f"## Children\n- {c_link}\n\n## Mentions"
-                    )
+            if c_link not in content:
+                if "## Children" in content:
+                    content = content.replace("## Children\n", f"## Children\n- {c_link}\n", 1)
+                elif "## Mentions" in content:
+                    content = content.replace("## Mentions", f"## Children\n- {c_link}\n\n## Mentions", 1)
+                else:
+                    content = content.rstrip() + f"\n\n## Children\n- {c_link}\n"
 
         with open(skill_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -277,13 +306,16 @@ tags: [{tags_str}]
         }
 
     save_graph(graph)
+    fcntl.flock(lock_file, fcntl.LOCK_UN)
+    lock_file.close()
     return f"OK: Skill '{name}' {action}"
 
 
 def mark_processed(filename: str) -> str:
     """Marks a vacancy file as processed so it won't be re-processed."""
     mined = load_mined()
-    if filename not in mined:
+    mined_set = set(mined)
+    if filename not in mined_set:
         mined.append(filename)
         save_mined(mined)
     return f"OK: {filename} marked as processed"

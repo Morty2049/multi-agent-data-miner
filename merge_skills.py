@@ -40,10 +40,15 @@ def load_synonyms() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def normalize(name: str) -> str:
-    """Normalize skill name for comparison: lowercase, strip separators."""
+    """Normalize skill name for duplicate detection: lowercase, strip separators.
+
+    Only strips whitespace, hyphens, underscores, and slashes — NOT dots or
+    special chars. This correctly separates C++ from C#, .NET from NET,
+    and Node.js from Vue.js while still merging "CI_CD" with "CI/CD".
+    """
     name = os.path.splitext(name)[0]           # remove .md if present
     name = name.lower()
-    name = re.sub(r"[\s\-_/\\.]", "", name)    # strip separators
+    name = re.sub(r"[\s\-_/\\]", "", name)     # strip separators only
     return name
 
 
@@ -492,12 +497,14 @@ def main():
 
     print_report(dup_groups, broken_links, self_refs)
 
-    if backup_only or not apply:
-        if not apply:
-            print("ℹ️  This was a dry run. No files were modified.")
-            print("   Run with --apply to apply all fixes.\n")
-        if backup_only and apply:
-            backup_skills()
+    if not apply:
+        print("ℹ️  This was a dry run. No files were modified.")
+        print("   Run with --apply to apply all fixes.\n")
+        return
+
+    if backup_only:
+        backup_skills()
+        print("ℹ️  Backup-only mode — no fixes applied.\n")
         return
 
     # --- Apply phase ---
