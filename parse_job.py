@@ -212,6 +212,14 @@ def safe_filename(text: str) -> str:
     return re.sub(r"[^\w\s\-]", "", text, flags=re.UNICODE).strip()
 
 
+def sanitize_text(text: str) -> str:
+    """Remove lone Unicode surrogates that break utf-8 encoding."""
+    if not text:
+        return text
+    # Encode to utf-8, replacing surrogates with '?', then decode back
+    return text.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def _extract_description_from_fulltext(fulltext: str) -> str:
     """Extract the job description section from LinkedIn's full body text."""
     start_markers = ["About the job\n", "About the job\r\n"]
@@ -303,7 +311,7 @@ Company size: {data.get('company_size', 'Unknown')}
 
 ## Jobs
 
-{data.get('jobs_section', '_Backlinks from vacancy files will appear here._')}
+{data.get('jobs_section', '')}
 """
 
 
@@ -338,6 +346,57 @@ async def parse_company_page(company_url: str, company_name: str, page=None) -> 
         print(f"  \u26a0\ufe0f Company parsing failed: {e}")
     
     return data
+
+
+def append_job_to_company(comp_path: str, vac_filename_stem: str, job_title: str, location: str, job_id: str):
+    """Append a [[wikilink]] for a vacancy into the company file's ## Jobs section.
+    
+    Idempotent: skips if job_id already linked.
+    """
+    if not os.path.exists(comp_path):
+        return
+    
+    try:
+        with open(comp_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception:
+        return
+    
+    # Skip if this job_id is already linked
+    if f"({job_id})" in content:
+        return
+    
+    suffix = f" | {sanitize_text(location)}" if location else ""
+    link_line = f"- [[{vac_filename_stem}]] — {sanitize_text(job_title)}{suffix}"
+    
+    # Find ## Jobs section
+    jobs_idx = content.find("## Jobs")
+    if jobs_idx < 0:
+        # Append section at end
+        content = content.rstrip() + "\n\n## Jobs\n\n" + link_line + "\n"
+    else:
+        # Find where to insert (after ## Jobs\n\n)
+        insert_pos = content.find("\n", jobs_idx)
+        if insert_pos < 0:
+            insert_pos = len(content)
+        else:
+            insert_pos += 1  # past the newline after header
+        
+        # Find next ## section
+        next_section = content.find("\n## ", insert_pos)
+        if next_section < 0:
+            # Append at end
+            content = content.rstrip() + "\n" + link_line + "\n"
+        else:
+            # Insert before next section
+            content = (
+                content[:next_section].rstrip()
+                + "\n" + link_line
+                + "\n" + content[next_section:]
+            )
+    
+    with open(comp_path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +499,9 @@ async def parse_job(url: str, version: str = "", page=None):
             f.write(build_vacancy_md(data))
         print(f"\u2705 Vacancy: {vac_path}")
         
+        # Derive the vacancy filename stem for wikilinks
+        vac_filename_stem = os.path.splitext(os.path.basename(vac_path))[0]
+        
         # Step 5: Parse company page (reuse the same browser page)
         comp_dir = os.path.join(VAULT_BASE, "Companies")
         os.makedirs(comp_dir, exist_ok=True)
@@ -460,6 +522,9 @@ async def parse_job(url: str, version: str = "", page=None):
                 f.write(build_company_md(comp_data))
             print(f"\u2705 Company: {comp_path}")
         
+        # Append vacancy link to company file's ## Jobs section
+        append_job_to_company(comp_path, vac_filename_stem, job_title, top["location"], job_id)
+        print(f"  -> Linked to company: {safe_company}")
         # Print summary
         print(f"  \u2192 {job_title} @ {company} | {top['location']} | desc: {len(description)} chars ({desc_method})")
         
