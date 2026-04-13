@@ -276,8 +276,12 @@ async def process_vacancy(
 
     # 4c. Add new synonyms
     for syn in new_synonyms:
-        result = skills_tools.add_synonym(syn["abbreviation"], syn["canonical"])
-        print(f"     {result}")
+        abbrev = syn.get("abbreviation")
+        canon = syn.get("canonical")
+        if abbrev and canon:
+            result = skills_tools.add_synonym(abbrev, canon)
+            print(f"     {result}")
+
 
     # 4d. Mark as processed
     skills_tools.mark_processed(filename)
