@@ -1,4 +1,5 @@
 # LinkedIn Data Miner
+<img width="761" height="416" alt="image" src="https://github.com/user-attachments/assets/afbb84f7-56d1-4540-ab8d-ff125e129f1f" />
 
 An autonomous pipeline that mines LinkedIn job vacancies into a structured Obsidian knowledge graph — with bi-directionally linked Vacancies, Companies, and Skills nodes.
 
@@ -198,7 +199,7 @@ venv/bin/python merge_skills.py --restore
 │   seed_graph.py        → rebuild skills_graph.json          │
 └─────────────────────────────────────────────────────────────┘
 ```
-<img width="761" height="416" alt="image" src="https://github.com/user-attachments/assets/afbb84f7-56d1-4540-ab8d-ff125e129f1f" />
+
 
 ---
 
