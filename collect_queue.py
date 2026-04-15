@@ -24,7 +24,15 @@ import datetime
 
 from playwright.async_api import async_playwright
 
-SESSION_DIR = os.path.abspath("linkedin_session")
+from config import (
+    COLLECT_DELAY_MAX,
+    COLLECT_DELAY_MIN,
+    LinkedInBanned,
+    SESSION_DIR,
+    USER_AGENT,
+    assert_not_banned,
+)
+
 DATA_DIR = os.path.abspath("data")
 QUEUE_FILE = os.path.join(DATA_DIR, "job_queue_prod.json")
 PARSED_FILE = os.path.join(DATA_DIR, "job_queue_prod_parsed.json")
@@ -34,9 +42,9 @@ SEEDS_FILE = os.path.join(DATA_DIR, "tier2_seeds.json")
 RECOMMENDED_URL = "https://www.linkedin.com/jobs/collections/recommended/"
 SIMILAR_URL_TPL = "https://www.linkedin.com/jobs/collections/similar-jobs/?currentJobId={job_id}&referenceJobId={job_id}"
 
-# Humanized delays (seconds)
-DELAY_MIN = 3
-DELAY_MAX = 8
+# Humanized delays (seconds) — pulled from config / .env
+DELAY_MIN = COLLECT_DELAY_MIN
+DELAY_MAX = COLLECT_DELAY_MAX
 PAGE_LOAD_WAIT = 5  # seconds after page load
 
 
@@ -193,6 +201,7 @@ async def collect_tier1(page, pages: int = 10) -> list[str]:
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(PAGE_LOAD_WAIT)
+            await assert_not_banned(page)
 
             # Initial extraction before scrolling
             ids_before = await page.evaluate(EXTRACT_JOB_IDS_JS)
@@ -229,6 +238,9 @@ async def collect_tier1(page, pages: int = 10) -> list[str]:
                 print(f"   ⚠️ No new jobs on this page — stopping pagination")
                 break
 
+        except LinkedInBanned as e:
+            print(f"   🛑 LinkedIn ban/checkpoint — halting tier1: {e}")
+            break
         except Exception as e:
             print(f"   ❌ Error: {e}")
             break
@@ -273,6 +285,7 @@ async def collect_tier2(page) -> list[str]:
         try:
             await page.goto(similar_url, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(PAGE_LOAD_WAIT)
+            await assert_not_banned(page)
 
             # Initial extraction
             ids_before = await page.evaluate(EXTRACT_JOB_IDS_JS)
@@ -299,6 +312,9 @@ async def collect_tier2(page) -> list[str]:
 
             print(f"   Found {len(page_ids)} similar jobs ({len(new_ids)} new)")
 
+        except LinkedInBanned as e:
+            print(f"   🛑 LinkedIn ban/checkpoint — halting tier2: {e}")
+            break
         except Exception as e:
             print(f"   ❌ Error: {e}")
 
@@ -341,8 +357,7 @@ async def collect(tier1: bool = False, tier2: bool = False, pages: int = 10,
         ctx = await pw.chromium.launch_persistent_context(
             user_data_dir=SESSION_DIR,
             headless=True,
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                       "AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+            user_agent=USER_AGENT,
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 

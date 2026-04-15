@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# pre-commit — refuse to commit LinkedIn session data, cookies or .env files.
+#
+# Install once with:
+#     git config core.hooksPath .githooks
+#
+# Blocks any staged path that matches known-sensitive patterns.
+
+set -euo pipefail
+
+BLOCK_PATTERNS=(
+    '^\.env$'
+    '^\.env\.'
+    'linkedin_session'
+    '/sessions/'
+    '^sessions/'
+    '/cookies/'
+    '^cookies/'
+    '\.session$'
+    'chrome_profile'
+    'playwright_session'
+    '/obsidian_vault/'
+    '^obsidian_vault/'
+    '^data/'
+)
+
+# Paths that are explicitly safe and should never trigger the block list.
+ALLOW_PATTERNS=(
+    '^\.env\.example$'
+)
+
+staged=$(git diff --cached --name-only --diff-filter=AM)
+if [[ -z "${staged}" ]]; then
+    exit 0
+fi
+
+offenders=()
+while IFS= read -r file; do
+    allowed=0
+    for pat in "${ALLOW_PATTERNS[@]}"; do
+        if [[ "${file}" =~ ${pat} ]]; then
+            allowed=1
+            break
+        fi
+    done
+    if (( allowed )); then
+        continue
+    fi
+    for pat in "${BLOCK_PATTERNS[@]}"; do
+        if [[ "${file}" =~ ${pat} ]]; then
+            offenders+=("${file}  (matched: ${pat})")
+            break
+        fi
+    done
+done <<< "${staged}"
+
+if (( ${#offenders[@]} > 0 )); then
+    echo ""
+    echo "🛑 pre-commit: refusing to commit sensitive paths:"
+    printf '   - %s\n' "${offenders[@]}"
+    echo ""
+    echo "If this is a false positive, run: git commit --no-verify"
+    echo "(but first double-check — sessions / cookies / .env must NEVER be"
+    echo " pushed to any remote.)"
+    exit 1
+fi
+
+exit 0

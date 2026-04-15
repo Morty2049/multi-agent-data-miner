@@ -1,32 +1,43 @@
-# env
+# env / secrets
 .env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 
-# credentials
+# virtualenvs
 venv/
 .venv/
 env/
 
-# exec logs and temp files
+# logs / temp
 *.log
 tmp/
 .DS_Store
 
-# credentials linkedin and cookies
+# LinkedIn sessions & cookies — NEVER commit (any variant)
 sessions/
 cookies/
-*.json #
-
-# data (obsidian vault)
-obsidian_vault/
 linkedin_session/
+linkedin_session_*/
+*.session
+*_session/
+playwright_session*/
+chrome_profile*/
+
+# local pipeline data (obsidian vault, queues, checkpoints)
+obsidian_vault/
 data/
 code-references/
 
-# architecture
+# architecture drafts
 arch/
 ADR.md
 ARCHITECTURE.md
 FUNCTIONAL_REQUIREMENTS.md
 history.md
+
+# IDE / local
+.idea/
+.vscode/
+*.swp

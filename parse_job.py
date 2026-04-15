@@ -16,7 +16,8 @@ from html.parser import HTMLParser
 
 from playwright.async_api import async_playwright
 
-SESSION_DIR = os.path.abspath("linkedin_session")
+from config import SESSION_DIR, USER_AGENT, assert_not_banned
+
 VAULT_BASE = os.path.abspath("obsidian_vault")
 
 
@@ -423,12 +424,13 @@ async def parse_job(url: str, version: str = "", page=None):
             pw_inst = await async_playwright().start()
             ctx = await pw_inst.chromium.launch_persistent_context(
                 user_data_dir=SESSION_DIR, headless=True,
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+                user_agent=USER_AGENT,
             )
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        
+
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         await asyncio.sleep(4)
+        await assert_not_banned(page)
         
         # Step 1: Extract metadata
         raw = await page.evaluate(EXTRACT_META_JS)

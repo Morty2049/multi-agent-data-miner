@@ -34,6 +34,31 @@ Plus two maintenance utilities:
 
 ---
 
+## Safety & account hygiene
+
+This repo scrapes LinkedIn from a secondary "market-research" account
+(`linkedin_session_market/` — never the personal one). All rate-limiting and
+ban-detection lives in [`config.py`](config.py):
+
+- single source of truth for `SESSION_DIR` (defaults to `linkedin_session_market`)
+- random per-job delays (8–20 s), random per-page delays (3–8 s)
+- hard **daily parse cap of 600 vacancies** persisted in `data/rate_limit.json`
+- exponential backoff (30 s → 10 min) on transient errors
+- immediate halt when a `/checkpoint/`, `/authwall`, or "security verification"
+  page is detected
+- `.env` + `.env.example` for configuration; `.env` is gitignored
+- pre-commit hook in `.githooks/pre-commit` blocks any staged session / cookie /
+  `.env` file. Install once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Any variant of `linkedin_session*/`, `sessions/`, `cookies/`, `*.session`,
+`chrome_profile*`, `.env` and `.env.*` is in `.gitignore`.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
