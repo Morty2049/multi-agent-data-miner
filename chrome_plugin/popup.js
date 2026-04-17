@@ -21,8 +21,7 @@ function showStatus(msg, isError = true) {
 function hideStatus() { $("#status-bar").classList.add("hidden"); }
 
 function loading(container) {
-  container.innerHTML =
-    '<div class="loading"><div class="spinner"></div><br>Loading...</div>';
+  container.innerHTML = '<div class="loading"><div class="spinner"></div><br>Loading...</div>';
 }
 
 function empty(container, msg = "No results") {
@@ -33,6 +32,12 @@ function scoreColor(score) {
   if (score >= 0.7) return "var(--accent2)";
   if (score >= 0.4) return "var(--accent3)";
   return "var(--red)";
+}
+
+function openInCurrentTab(url) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) chrome.tabs.update(tabs[0].id, { url });
+  });
 }
 
 // ── tabs ────────────────────────────────────────────────────────────
@@ -62,7 +67,7 @@ async function checkApi() {
     $("#api-status").classList.remove("online");
     $("#api-status").classList.add("offline");
     $("#api-status").title = "API offline";
-    showStatus("API server offline. Run: uvicorn api_server:app --reload");
+    showStatus("API offline. Run: venv/bin/uvicorn chrome_plugin.api_server:app --port 8000");
     return false;
   }
 }
@@ -79,40 +84,41 @@ async function loadDashboard() {
     $("#stat-companies").textContent = d.total_companies;
     $("#stat-skills").textContent = d.total_skills;
 
+    // Data freshness
+    const freshness = $("#data-freshness");
+    if (freshness && d.last_parsed_date) {
+      const age = d.data_age_days;
+      const ageText = age === 0 ? "today" : age === 1 ? "1d ago" : `${age}d ago`;
+      freshness.textContent = `Data: ${d.last_parsed_date} (${ageText})`;
+      freshness.style.color = age <= 1 ? "var(--accent2)" : age <= 7 ? "var(--accent3)" : "var(--red)";
+    }
+
     // top skills bar chart
     const chart = $("#top-skills-chart");
     const maxCount = d.top_skills[0]?.count || 1;
     chart.innerHTML = d.top_skills
       .slice(0, 15)
-      .map(
-        (s) => `
+      .map((s) => `
       <div class="bar-row">
         <span class="bar-label" title="${s.name}">${s.name}</span>
         <div class="bar-track">
           <div class="bar-fill" style="width:${(s.count / maxCount) * 100}%"></div>
         </div>
         <span class="bar-count">${s.count}</span>
-      </div>`
-      )
+      </div>`)
       .join("");
 
     // top locations
     const locDiv = $("#top-locations");
     locDiv.innerHTML = d.top_locations
-      .map(
-        (l) =>
-          `<span class="tag">${l.name}<span class="tag-count">${l.count}</span></span>`
-      )
+      .map((l) => `<span class="tag">${l.name}<span class="tag-count">${l.count}</span></span>`)
       .join("");
 
     // employment types
     const empDiv = $("#employment-types");
     empDiv.innerHTML = Object.entries(d.employment_types)
       .sort((a, b) => b[1] - a[1])
-      .map(
-        ([k, v]) =>
-          `<span class="tag">${k}<span class="tag-count">${v}</span></span>`
-      )
+      .map(([k, v]) => `<span class="tag">${k}<span class="tag-count">${v}</span></span>`)
       .join("");
   } catch (e) {
     showStatus(`Dashboard error: ${e.message}`);
@@ -141,13 +147,9 @@ async function searchSkills(q) {
   loading(container);
   try {
     const skills = await api(`/api/skills?q=${encodeURIComponent(q)}`);
-    if (!skills.length) {
-      empty(container, "No skills found");
-      return;
-    }
+    if (!skills.length) { empty(container, "No skills found"); return; }
     container.innerHTML = skills
-      .map(
-        (s) => `
+      .map((s) => `
       <div class="list-item" data-skill="${s.name}">
         <div class="list-item-title">${s.name}</div>
         <div class="list-item-sub">${s.about ? s.about.slice(0, 80) + (s.about.length > 80 ? "..." : "") : "No description"}</div>
@@ -156,8 +158,7 @@ async function searchSkills(q) {
           ${s.parents.length ? `<span class="badge badge-green">${s.parents[0]}</span>` : ""}
           ${s.children.length ? `<span class="badge badge-orange">${s.children.length} children</span>` : ""}
         </div>
-      </div>`
-      )
+      </div>`)
       .join("");
 
     container.querySelectorAll(".list-item").forEach((el) => {
@@ -175,10 +176,7 @@ async function showSkillDetail(name) {
 
   try {
     const s = await api(`/api/skills/${encodeURIComponent(name)}`);
-    if (s.error) {
-      detail.innerHTML = `<p>${s.error}</p>`;
-      return;
-    }
+    if (s.error) { detail.innerHTML = `<p>${s.error}</p>`; return; }
     detail.innerHTML = `
       <h4>${s.name}</h4>
       <p>${s.about || "No description available."}</p>
@@ -198,41 +196,131 @@ async function showSkillDetail(name) {
           .map((m) => {
             const parts = m.split("_-_");
             const label = parts.length > 1 ? parts[0].replace(/_/g, " ") : m.replace(/_/g, " ");
-            return `<span class="tag">${label}</span>`;
+            return `<span class="tag clickable-tag" data-file="${m}">${label}</span>`;
           }).join("")}
           ${s.mentions.length > 8 ? `<span class="tag">+${s.mentions.length - 8} more</span>` : ""}
         </div>
       </div>`;
+
+    // Clickable vacancy mentions → open on LinkedIn
+    detail.querySelectorAll(".clickable-tag[data-file]").forEach((el) => {
+      el.style.cursor = "pointer";
+      el.addEventListener("click", () => {
+        const m = el.dataset.file.match(/\((\d+)\)/);
+        if (m) openInCurrentTab(`https://www.linkedin.com/jobs/view/${m[1]}/`);
+      });
+    });
   } catch (e) {
     detail.innerHTML = `<p>Error loading skill: ${e.message}</p>`;
   }
 }
 
-// ── MATCHER ─────────────────────────────────────────────────────────
+// ── MATCHER (multi-skill select) ───────────────────────────────────
+
+let selectedSkills = [];
+
+// Load persisted skills from storage
+chrome.storage.local.get("matcherSkills", (data) => {
+  if (data.matcherSkills) {
+    selectedSkills = data.matcherSkills;
+    renderSelectedSkills();
+  }
+});
+
+function saveSkillsToStorage() {
+  chrome.storage.local.set({ matcherSkills: selectedSkills });
+}
+
+function renderSelectedSkills() {
+  const container = $("#matcher-chips");
+  if (!container) return;
+  container.innerHTML = selectedSkills
+    .map((s, i) => `<span class="chip">${s}<button class="chip-x" data-idx="${i}">&times;</button></span>`)
+    .join("");
+  container.querySelectorAll(".chip-x").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedSkills.splice(parseInt(btn.dataset.idx), 1);
+      saveSkillsToStorage();
+      renderSelectedSkills();
+    });
+  });
+}
+
+let matcherDebounce = null;
+
+$("#matcher-input").addEventListener("input", (e) => {
+  clearTimeout(matcherDebounce);
+  matcherDebounce = setTimeout(() => autocompleteSkills(e.target.value), 200);
+});
+
+$("#matcher-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const v = e.target.value.trim();
+    if (v && !selectedSkills.includes(v)) {
+      selectedSkills.push(v);
+      saveSkillsToStorage();
+      renderSelectedSkills();
+      e.target.value = "";
+      hideAutocomplete();
+    }
+  }
+});
+
+async function autocompleteSkills(q) {
+  const dropdown = $("#matcher-autocomplete");
+  if (!q.trim()) { dropdown.innerHTML = ""; dropdown.style.display = "none"; return; }
+  try {
+    const results = await api(`/api/skills/autocomplete?q=${encodeURIComponent(q)}`);
+    if (!results.length) { dropdown.style.display = "none"; return; }
+    dropdown.style.display = "block";
+    dropdown.innerHTML = results
+      .filter((r) => !selectedSkills.includes(r.name))
+      .slice(0, 8)
+      .map((r) => `<div class="ac-item" data-name="${r.name}">${r.name} <span class="ac-count">${r.mentions}</span></div>`)
+      .join("");
+    dropdown.querySelectorAll(".ac-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        selectedSkills.push(el.dataset.name);
+        saveSkillsToStorage();
+        renderSelectedSkills();
+        $("#matcher-input").value = "";
+        hideAutocomplete();
+      });
+    });
+  } catch { dropdown.style.display = "none"; }
+}
+
+function hideAutocomplete() {
+  const d = $("#matcher-autocomplete");
+  if (d) { d.innerHTML = ""; d.style.display = "none"; }
+}
 
 $("#matcher-btn").addEventListener("click", runMatcher);
-$("#matcher-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") runMatcher();
+
+$("#matcher-clear").addEventListener("click", () => {
+  selectedSkills = [];
+  saveSkillsToStorage();
+  renderSelectedSkills();
+  $("#matcher-results").innerHTML = '<div class="empty">Add skills above to match jobs</div>';
 });
 
 async function runMatcher() {
-  const input = $("#matcher-input").value.trim();
   const container = $("#matcher-results");
-  if (!input) return;
+  if (!selectedSkills.length) {
+    empty(container, "Add skills first, then click Match");
+    return;
+  }
 
   loading(container);
   try {
-    const jobs = await api(`/api/jobs/match?skills=${encodeURIComponent(input)}`);
-    if (!jobs.length) {
-      empty(container, "No matching jobs found. Try different skills.");
-      return;
-    }
+    const skills = selectedSkills.join(",");
+    const jobs = await api(`/api/jobs/match?skills=${encodeURIComponent(skills)}`);
+    if (!jobs.length) { empty(container, "No matching jobs found."); return; }
     container.innerHTML = jobs
-      .map(
-        (j) => `
-      <div class="list-item" ${j.job_url ? `data-url="${j.job_url}"` : ""}>
+      .map((j) => `
+      <div class="list-item clickable" data-url="${j.job_url || ""}">
         <div class="list-item-title">${j.title}</div>
-        <div class="list-item-sub">${j.company} &middot; ${j.location || "Remote"}</div>
+        <div class="list-item-sub">${j.company} &middot; ${j.location || "Remote"} &middot; ${j.date || ""}</div>
         <div class="score-bar-wrap">
           <div class="score-bar">
             <div class="score-bar-fill" style="width:${j.match_score * 100}%; background:${scoreColor(j.match_score)}"></div>
@@ -243,12 +331,13 @@ async function runMatcher() {
           ${j.matched_skills.slice(0, 5).map((s) => `<span class="badge badge-green">${s}</span>`).join("")}
           ${j.missing_skills.length ? `<span class="badge badge-red">${j.missing_skills.length} gaps</span>` : ""}
         </div>
-      </div>`
-      )
+      </div>`)
       .join("");
 
-    container.querySelectorAll(".list-item[data-url]").forEach((el) => {
-      el.addEventListener("click", () => chrome.tabs.create({ url: el.dataset.url }));
+    container.querySelectorAll(".list-item.clickable").forEach((el) => {
+      if (el.dataset.url) {
+        el.addEventListener("click", () => openInCurrentTab(el.dataset.url));
+      }
     });
   } catch (e) {
     showStatus(`Matcher error: ${e.message}`);
@@ -270,24 +359,24 @@ async function searchCompanies(q) {
 
   try {
     const companies = await api(`/api/companies?q=${encodeURIComponent(q || "")}`);
-    if (!companies.length) {
-      empty(container, "No companies found");
-      return;
-    }
+    if (!companies.length) { empty(container, "No companies found"); return; }
     container.innerHTML = companies
-      .map(
-        (c) => `
-      <div class="list-item">
+      .map((c) => `
+      <div class="list-item clickable" data-url="${c.link || ""}">
         <div class="list-item-title">${c.name}</div>
-        <div class="list-item-sub">${c.industry || "—"} &middot; ${c.size || "—"}</div>
+        <div class="list-item-sub">${c.industry || ""} &middot; ${c.size || ""}</div>
         <div class="list-item-meta">
           <span class="badge badge-accent">${c.jobs_count} jobs</span>
           ${c.headquarters && c.headquarters !== "Unknown" ? `<span class="badge badge-green">${c.headquarters}</span>` : ""}
-          ${c.website ? `<span class="badge badge-orange">website</span>` : ""}
         </div>
-      </div>`
-      )
+      </div>`)
       .join("");
+
+    container.querySelectorAll(".list-item.clickable").forEach((el) => {
+      if (el.dataset.url) {
+        el.addEventListener("click", () => openInCurrentTab(el.dataset.url));
+      }
+    });
   } catch (e) {
     showStatus(`Company search error: ${e.message}`);
   }
@@ -301,21 +390,17 @@ $("#gaps-input").addEventListener("keydown", (e) => {
 });
 
 async function runGaps() {
-  const input = $("#gaps-input").value.trim();
+  const input = selectedSkills.length ? selectedSkills.join(",") : $("#gaps-input").value.trim();
   const container = $("#gaps-results");
   if (!input) return;
 
   loading(container);
   try {
     const gaps = await api(`/api/gaps?skills=${encodeURIComponent(input)}`);
-    if (!gaps.length) {
-      empty(container, "No skill gaps detected. Your profile covers everything!");
-      return;
-    }
+    if (!gaps.length) { empty(container, "No skill gaps detected!"); return; }
     const maxDemand = gaps[0]?.demand || 1;
     container.innerHTML = gaps
-      .map(
-        (g) => `
+      .map((g) => `
       <div class="gap-bar">
         <span class="gap-name" title="${g.name}">${g.name}</span>
         <div class="gap-track">
@@ -323,8 +408,7 @@ async function runGaps() {
         </div>
         <span class="gap-count">${g.demand}</span>
       </div>
-      ${g.about ? `<div class="gap-about">${g.about.slice(0, 100)}${g.about.length > 100 ? "..." : ""}</div>` : ""}`
-      )
+      ${g.about ? `<div class="gap-about">${g.about.slice(0, 100)}${g.about.length > 100 ? "..." : ""}</div>` : ""}`)
       .join("");
   } catch (e) {
     showStatus(`Gap analysis error: ${e.message}`);

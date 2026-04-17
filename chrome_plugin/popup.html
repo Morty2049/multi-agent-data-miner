@@ -51,6 +51,7 @@
         <div class="stat-label">Skills</div>
       </div>
     </div>
+    <div id="data-freshness" class="data-freshness"></div>
 
     <h3>Top Skills in Market</h3>
     <div id="top-skills-chart" class="bar-chart"></div>
@@ -73,11 +74,14 @@
 
   <!-- ═══ MATCHER ═══ -->
   <section id="tab-matcher" class="panel">
-    <div class="search-box">
-      <input type="text" id="matcher-input" placeholder="Your skills: Python, AWS, Docker..." />
+    <div id="matcher-chips" class="chips-container"></div>
+    <div class="search-box" style="position:relative;">
+      <input type="text" id="matcher-input" placeholder="Type skill name..." autocomplete="off" />
       <button id="matcher-btn" class="btn-primary">Match</button>
+      <button id="matcher-clear" class="btn-clear" title="Clear all">&times;</button>
+      <div id="matcher-autocomplete" class="autocomplete-dropdown"></div>
     </div>
-    <div class="hint">Enter comma-separated skills to find matching jobs</div>
+    <div class="hint">Type to search skills, click to add, then hit Match. Skills are saved between sessions.</div>
     <div id="matcher-results" class="list"></div>
   </section>
 

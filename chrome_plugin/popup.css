@@ -392,3 +392,89 @@ h3 {
   color: var(--text-dim);
   font-size: 12px;
 }
+
+/* ── data freshness ─────────────────────────────────────────── */
+.data-freshness {
+  font-size: 11px;
+  text-align: center;
+  padding: 4px 0 12px;
+  color: var(--text-dim);
+}
+
+/* ── clickable items ────────────────────────────────────────── */
+.list-item.clickable { cursor: pointer; }
+.list-item.clickable:hover { border-color: var(--accent); background: var(--surface2); }
+.clickable-tag { cursor: pointer; }
+.clickable-tag:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── chips (multi-skill select) ─────────────────────────────── */
+.chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-height: 0;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(108, 140, 255, .15);
+  color: var(--accent);
+  border: 1px solid rgba(108, 140, 255, .3);
+  border-radius: 16px;
+  padding: 3px 8px 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.chip-x {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.chip-x:hover { opacity: 1; }
+
+.btn-clear {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+.btn-clear:hover { color: var(--red); border-color: var(--red); }
+
+/* ── autocomplete dropdown ──────────────────────────────────── */
+.autocomplete-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.ac-item {
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+.ac-item:hover { background: var(--surface2); }
+.ac-count {
+  color: var(--text-dim);
+  font-size: 10px;
+}

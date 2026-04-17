@@ -11,7 +11,9 @@ Or from inside chrome_plugin/:
 
 from __future__ import annotations
 
+import datetime
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -20,6 +22,7 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # Ensure project root is on sys.path so `import config` works
 # regardless of where uvicorn was started.
@@ -38,7 +41,7 @@ SKILLS_DIR = VAULT / "Skills"
 GRAPH_PATH = DATA / "skills_graph.json"
 SYNONYMS_PATH = DATA / "skill_synonyms.json"
 
-app = FastAPI(title="Job Miner API", version="1.0.0")
+app = FastAPI(title="Job Miner API", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -71,6 +74,37 @@ def _read_md(path: Path) -> tuple[dict, str]:
 
 def _extract_wikilinks(text: str) -> list[str]:
     return _WIKILINK.findall(text)
+
+
+def _safe_filename(text: str) -> str:
+    return re.sub(r"[^\w\s\-]", "", text, flags=re.UNICODE).strip()
+
+
+def _sanitize_text(text: str) -> str:
+    if not text:
+        return text
+    return text.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _html_to_markdown(html: str) -> str:
+    if not html:
+        return ""
+    text = html.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r'<strong>(.*?)</strong>', r'**\1**', text, flags=re.DOTALL)
+    text = re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=re.DOTALL)
+    text = re.sub(r'<em>(.*?)</em>', r'*\1*', text, flags=re.DOTALL)
+    text = re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=re.DOTALL)
+    text = re.sub(r'<h[1-6][^>]*>(.*?)</h[1-6]>', r'\n## \1\n', text, flags=re.DOTALL)
+    text = re.sub(r'<li[^>]*>(.*?)</li>', r'- \1', text, flags=re.DOTALL)
+    text = re.sub(r'</?[ou]l[^>]*>', '', text)
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    text = re.sub(r'</p>', '\n', text)
+    text = re.sub(r'<p[^>]*>', '', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&nbsp;', ' ').replace('&quot;', '"')
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 # ── cached data loaders ─────────────────────────────────────────────
@@ -111,6 +145,7 @@ def _load_vacancies() -> list[dict]:
             "date": str(fm.get("date", "")),
             "job_id": fm.get("job_id", ""),
             "job_url": fm.get("job_url", ""),
+            "company_url": fm.get("company_url", ""),
             "applies": fm.get("applies", ""),
             "skills": skills,
         })
@@ -132,6 +167,7 @@ def _load_companies() -> list[dict]:
             "headquarters": fm.get("headquarters", ""),
             "website": fm.get("website", ""),
             "size": fm.get("Company size", fm.get("company_size", "")),
+            "link": fm.get("link", ""),
             "jobs_count": len(job_links),
         })
     _cache["companies"] = result
@@ -142,7 +178,7 @@ def _load_companies() -> list[dict]:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "vault": str(VAULT), "data": str(DATA)}
 
 
 @app.get("/api/dashboard")
@@ -171,6 +207,14 @@ def dashboard():
         if emp:
             employment_counts[emp] += 1
 
+    # Data freshness — latest parsed date + age in days
+    dates = [v["date"] for v in vacancies if v["date"]]
+    last_parsed = max(dates) if dates else "unknown"
+    try:
+        age = (datetime.date.today() - datetime.date.fromisoformat(last_parsed)).days
+    except (ValueError, TypeError):
+        age = -1
+
     return {
         "total_vacancies": len(vacancies),
         "total_companies": len(companies),
@@ -178,6 +222,8 @@ def dashboard():
         "top_skills": [{"name": n, "count": c} for n, c in top_skills],
         "top_locations": [{"name": n, "count": c} for n, c in top_locations],
         "employment_types": dict(employment_counts),
+        "last_parsed_date": last_parsed,
+        "data_age_days": age,
     }
 
 
@@ -198,6 +244,22 @@ def list_skills(q: str = Query("", description="search query")):
         })
     results.sort(key=lambda x: x["mentions_count"], reverse=True)
     return results[:100]
+
+
+@app.get("/api/skills/autocomplete")
+def autocomplete_skills(q: str = Query("", min_length=1)):
+    """Fast autocomplete for skill names — used by multi-select matcher."""
+    graph = _load_graph()
+    q_lower = q.lower()
+    results = []
+    for name, data in graph.items():
+        if q_lower in name.lower():
+            results.append({
+                "name": name,
+                "mentions": len(data.get("mentions", [])),
+            })
+    results.sort(key=lambda x: x["mentions"], reverse=True)
+    return results[:20]
 
 
 @app.get("/api/skills/{name}")
@@ -321,6 +383,144 @@ def _word_match(term: str, text: str) -> bool:
         return bool(re.search(r"\b" + re.escape(term) + r"\b", text))
     except re.error:
         return term in text
+
+
+# ── Parse endpoint — saves a job from the browser DOM to vault ──────
+
+
+class ParseRequest(BaseModel):
+    url: str
+    job_id: str
+    title: str
+    company: str
+    company_url: str = ""
+    location: str = ""
+    employment: str = "Full-time"
+    applies: str = ""
+    reposted: str = ""
+    description_html: str = ""
+    description_text: str = ""
+
+
+@app.post("/api/parse")
+def parse_from_browser(req: ParseRequest):
+    """Accept extracted job data from the content script and write vault files."""
+    # Rate limit check
+    if not config.can_parse_more():
+        return {"error": "daily_cap", "message": f"Daily cap reached ({config.DAILY_PARSE_CAP})"}
+
+    job_id = req.job_id
+    if not job_id:
+        return {"error": "missing_job_id"}
+
+    # Build description
+    if req.description_html:
+        description = _html_to_markdown(req.description_html)
+    elif req.description_text:
+        description = _sanitize_text(req.description_text)
+    else:
+        description = "_No description extracted_"
+
+    today = datetime.date.today().isoformat()
+    company = _sanitize_text(req.company) or "Unknown Company"
+    title = _sanitize_text(req.title) or "Unknown Role"
+
+    # Write vacancy
+    VACANCIES_DIR.mkdir(parents=True, exist_ok=True)
+    safe_company = _safe_filename(company)[:40]
+    safe_title = _safe_filename(title)[:60]
+    vac_filename = f"{safe_company}_-_{safe_title}_({job_id}).md".replace(" ", "_")
+    vac_path = VACANCIES_DIR / vac_filename
+
+    if vac_path.exists():
+        return {"status": "exists", "job_id": job_id, "file": vac_filename}
+
+    vacancy_md = f"""---
+date: {today}
+type: vacancy
+source: chrome_extension
+job_id: "{job_id}"
+company: "[[{company}]]"
+location: {req.location}
+reposted: {req.reposted}
+applies: {req.applies}
+employment: {req.employment}
+job_url: {req.url}
+apply_url: Easy Apply (LinkedIn)
+company_url: {req.company_url}
+tags:
+  - vacancy
+  - chrome_parsed
+---
+# {title}
+
+**Company:** [[{company}]]
+**Location:** {req.location}
+**Employment:** {req.employment}
+
+## Job Description
+
+{description}
+"""
+    vac_path.write_text(vacancy_md, encoding="utf-8")
+
+    # Write/update company file
+    COMPANIES_DIR.mkdir(parents=True, exist_ok=True)
+    comp_filename = f"{safe_company}.md"
+    comp_path = COMPANIES_DIR / comp_filename
+
+    if not comp_path.exists():
+        company_md = f"""---
+type: "[[Company]]"
+name: {company}
+industry: Unknown
+headquarters: Unknown
+link: {req.company_url}
+website: Unknown
+Company size: Unknown
+---
+## Overview
+
+_Parsed via Chrome extension._
+
+## Jobs
+
+"""
+        comp_path.write_text(company_md, encoding="utf-8")
+
+    # Append vacancy link to company
+    vac_stem = vac_path.stem
+    comp_text = comp_path.read_text(encoding="utf-8")
+    if f"({job_id})" not in comp_text:
+        link_line = f"- [[{vac_stem}]] — {title} | {req.location}\n"
+        if "## Jobs" in comp_text:
+            comp_text = comp_text.rstrip() + "\n" + link_line
+        else:
+            comp_text = comp_text.rstrip() + "\n\n## Jobs\n\n" + link_line
+        comp_path.write_text(comp_text, encoding="utf-8")
+
+    config.register_parse()
+
+    # Clear cache so next dashboard load picks up new data
+    _cache.clear()
+
+    return {
+        "status": "saved",
+        "job_id": job_id,
+        "file": vac_filename,
+        "parsed_today": config.parsed_today(),
+        "remaining_today": config.remaining_today(),
+    }
+
+
+@app.get("/api/rate")
+def rate_status():
+    """Current daily rate limit status."""
+    return {
+        "parsed_today": config.parsed_today(),
+        "daily_cap": config.DAILY_PARSE_CAP,
+        "remaining": config.remaining_today(),
+    }
 
 
 @app.post("/api/cache/clear")
