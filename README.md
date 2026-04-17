@@ -34,6 +34,45 @@ Plus two maintenance utilities:
 
 ---
 
+## Chrome Extension — Job Miner
+
+A local Chrome extension that turns your vault into a live intelligence layer
+on top of LinkedIn:
+
+- **Dashboard** — total vacancies/companies/skills, top skills bar chart,
+  locations, employment types
+- **Skills browser** — search the skill graph, see parents/children/mentions
+- **Job Matcher** — enter your skills → ranked jobs with match score %
+- **Company explorer** — search companies, see job counts
+- **Skill Gap analysis** — shows skills you're missing from matching jobs
+- **Content script** — auto-detects and highlights tracked skills on any
+  LinkedIn `/jobs/*` page (floating panel + inline highlights)
+
+### Quick start
+
+```bash
+# 1. Start the API server (reads obsidian_vault/ + data/)
+venv/bin/uvicorn chrome_plugin.api_server:app --reload --port 8000
+
+# 2. Load extension in Chrome
+#    chrome://extensions → Developer mode → Load unpacked → select chrome_plugin/
+
+# 3. Open any LinkedIn job page — skills are auto-highlighted
+#    Click the extension icon for the full dashboard
+```
+
+### Future: multi-user service
+
+> The current architecture is local-first (vault on disk, localhost API).
+> As the project grows toward a multi-user service:
+> - Replace file-based vault reads with a centralized DB (Postgres + pgvector)
+> - API server → cloud deployment (FastAPI on Railway / Fly.io / Supabase Edge)
+> - Auth layer (API keys or OAuth) for per-user data isolation
+> - Chrome extension communicates with the remote API instead of localhost
+> - Shared skill graph across users; per-user vacancy/company data
+
+---
+
 ## Safety & account hygiene
 
 This repo scrapes LinkedIn from a secondary "market-research" account

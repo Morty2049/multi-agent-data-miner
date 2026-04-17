@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Miner</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- status bar -->
+  <div id="status-bar" class="status-bar hidden">
+    <span id="status-msg"></span>
+    <button id="status-close" class="status-close">&times;</button>
+  </div>
+
+  <!-- header -->
+  <header>
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+        <path d="M2 17l10 5 10-5"/>
+        <path d="M2 12l10 5 10-5"/>
+      </svg>
+      <span>Job Miner</span>
+    </div>
+    <div id="api-status" class="api-dot offline" title="API offline"></div>
+  </header>
+
+  <!-- tabs -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="skills">Skills</button>
+    <button class="tab" data-tab="matcher">Matcher</button>
+    <button class="tab" data-tab="companies">Companies</button>
+    <button class="tab" data-tab="gaps">Gaps</button>
+  </nav>
+
+  <!-- ═══ DASHBOARD ═══ -->
+  <section id="tab-dashboard" class="panel active">
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-vacancies">—</div>
+        <div class="stat-label">Vacancies</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-companies">—</div>
+        <div class="stat-label">Companies</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-skills">—</div>
+        <div class="stat-label">Skills</div>
+      </div>
+    </div>
+
+    <h3>Top Skills in Market</h3>
+    <div id="top-skills-chart" class="bar-chart"></div>
+
+    <h3>Top Locations</h3>
+    <div id="top-locations" class="tag-cloud"></div>
+
+    <h3>Employment Types</h3>
+    <div id="employment-types" class="tag-cloud"></div>
+  </section>
+
+  <!-- ═══ SKILLS ═══ -->
+  <section id="tab-skills" class="panel">
+    <div class="search-box">
+      <input type="text" id="skill-search" placeholder="Search skills (e.g. Kubernetes, Python)..." />
+    </div>
+    <div id="skill-results" class="list"></div>
+    <div id="skill-detail" class="detail-panel hidden"></div>
+  </section>
+
+  <!-- ═══ MATCHER ═══ -->
+  <section id="tab-matcher" class="panel">
+    <div class="search-box">
+      <input type="text" id="matcher-input" placeholder="Your skills: Python, AWS, Docker..." />
+      <button id="matcher-btn" class="btn-primary">Match</button>
+    </div>
+    <div class="hint">Enter comma-separated skills to find matching jobs</div>
+    <div id="matcher-results" class="list"></div>
+  </section>
+
+  <!-- ═══ COMPANIES ═══ -->
+  <section id="tab-companies" class="panel">
+    <div class="search-box">
+      <input type="text" id="company-search" placeholder="Search companies..." />
+    </div>
+    <div id="company-results" class="list"></div>
+  </section>
+
+  <!-- ═══ GAPS ═══ -->
+  <section id="tab-gaps" class="panel">
+    <div class="search-box">
+      <input type="text" id="gaps-input" placeholder="Your skills: Python, AWS, Docker..." />
+      <button id="gaps-btn" class="btn-primary">Analyze</button>
+    </div>
+    <div class="hint">Shows skills you're missing that appear in jobs matching your profile</div>
+    <div id="gaps-results" class="list"></div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
