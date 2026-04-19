@@ -27,22 +27,55 @@
     return /\/jobs\/view\/\d+/.test(location.href);
   }
 
-  function isJobListPage() {
-    return (
-      /\/jobs\/collections\//.test(location.href) ||
-      /\/jobs\/search\//.test(location.href)
-    );
+  function isRecommendedPage() {
+    return /\/jobs\/collections\/recommended/.test(location.href);
   }
 
-  // ── skill detection (original feature) ───────────────────────────
+  function isSearchPage() {
+    return /\/jobs\/search/.test(location.href);
+  }
+
+  function isSimilarJobsPage() {
+    return /\/jobs\/collections\/similar-jobs/.test(location.href);
+  }
+
+  function isJobListPage() {
+    return isRecommendedPage() || isSearchPage() || isSimilarJobsPage();
+  }
+
+  // Replace / add ?start=N in current URL
+  function urlWithStart(n) {
+    const u = new URL(location.href);
+    u.searchParams.set("start", String(n));
+    return u.toString();
+  }
+
+  // Ban / authwall detection (mirrors config.py)
+  const BAN_URL_PATTERNS = ["/checkpoint/", "/authwall", "/uas/login", "/login?", "/security/"];
+  const BAN_TEXT_PATTERNS = [
+    "unusual activity", "security verification", "let's do a quick security check",
+    "we restrict", "your account has been temporarily",
+    "we've detected some unusual activity",
+  ];
+
+  function detectBan() {
+    const url = location.href;
+    for (const p of BAN_URL_PATTERNS) if (url.includes(p)) return `url: ${p}`;
+    const body = document.body ? document.body.innerText.slice(0, 4000).toLowerCase() : "";
+    for (const p of BAN_TEXT_PATTERNS) if (body.includes(p)) return `text: ${p}`;
+    return null;
+  }
+
+  // ── skill detection (unchanged) ──────────────────────────────────
 
   function getJobDescription() {
     const selectors = [
+      "#job-details",
       ".jobs-description__content",
       ".jobs-box__html-content",
       ".jobs-description-content__text",
       '[class*="description__text"]',
-      "#job-details",
+      "article",
     ];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
@@ -131,58 +164,140 @@
     } catch { /* API offline */ }
   }
 
-  // ── extract current job from DOM ─────────────────────────────────
+  // ── click "Show more" to expand description (parse_job.py parity) ─
 
-  function extractCurrentJob() {
-    const url = location.href;
-    const jobId = jobIdFromUrl(url);
-    if (!jobId) return null;
+  async function clickShowMore() {
+    const selectors = [
+      "button.jobs-description__footer-button",
+      'button[aria-label="Show more"]',
+      'button[aria-label*="more"]',
+    ];
+    for (const sel of selectors) {
+      const btn = document.querySelector(sel);
+      if (btn && btn.offsetParent !== null) {
+        try { btn.click(); await sleep(1000); return true; }
+        catch { continue; }
+      }
+    }
+    return false;
+  }
+
+  // ── fulltext description fallback (parse_job.py parity) ─────────
+
+  function extractDescriptionFulltext(bodyText) {
+    const startMarkers = ["About the job\n", "About the job\r\n"];
+    let startIdx = 0;
+    for (const m of startMarkers) {
+      const i = bodyText.indexOf(m);
+      if (i >= 0) { startIdx = i + m.length; break; }
+    }
+    if (startIdx === 0) {
+      for (const m of ["Company Description\n", "Job Description\n"]) {
+        const i = bodyText.indexOf(m);
+        if (i >= 0) { startIdx = i; break; }
+      }
+    }
+    const endMarkers = [
+      "\nShow less", "\n\u2026 more", "\nSet alert",
+      "\nAbout the company", "\nSimilar jobs",
+      "\nPeople also viewed", "\nActivity on this job",
+    ];
+    let endIdx = bodyText.length;
+    for (const m of endMarkers) {
+      const i = bodyText.indexOf(m, startIdx);
+      if (i >= 0 && i < endIdx) endIdx = i;
+    }
+    const desc = bodyText.slice(startIdx, endIdx).trim();
+    return desc.length > 30 ? desc : "";
+  }
+
+  // ── top_card parser (parse_job.py parity) ────────────────────────
+
+  function parseTopCardFromBody(bodyText) {
+    const dot = String.fromCharCode(183); // ·
+    const result = { location: "", reposted: "", applies: "", employment: "" };
+    for (const line of bodyText.split("\n")) {
+      if (line.includes(dot) && (line.includes("applicant") || line.includes("ago") || line.includes("clicked"))) {
+        const ps = line.split(dot).map((p) => p.trim());
+        result.location = ps[0] || "";
+        for (const p of ps.slice(1)) {
+          const pl = p.toLowerCase();
+          if (pl.includes("reposted") || pl.includes("ago")) {
+            result.reposted = p.replace(/^Reposted\s+/i, "");
+          } else if (pl.includes("applicant") || pl.includes("clicked") || pl.includes("people")) {
+            result.applies = p;
+          }
+        }
+        break;
+      }
+    }
+    for (const emp of ["Full-time", "Part-time", "Contract", "Internship", "Temporary", "Volunteer"]) {
+      if (bodyText.includes(emp)) { result.employment = emp; break; }
+    }
+    if (!result.employment) result.employment = "Full-time";
+    return result;
+  }
+
+  // ── extract current job from DOM (used by single-save + autopilot) ─
+
+  async function extractJob(url, jobId) {
+    // Try to click "Show more" before reading description
+    await clickShowMore();
 
     const pageTitle = document.title || "";
-    const parts = pageTitle.split(" | ").map((p) => p.trim());
-    let title = parts[0] || "Unknown Role";
-    title = title.replace(/^\(\d+\)\s*/, "");
-    if (parts.length >= 3 && parts[parts.length - 1] === "LinkedIn") {
-      title = parts.slice(0, -2).join(" | ");
+    const titleEl = document.querySelector(
+      '.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1.t-24, h2.t-24'
+    );
+    let title;
+    if (titleEl && titleEl.innerText.trim()) {
+      title = titleEl.innerText.trim();
+    } else {
+      const parts = pageTitle.split(" | ").map((p) => p.trim());
+      title = (parts[0] || "Unknown Role").replace(/^\(\d+\)\s*/, "");
+      if (parts.length >= 3 && parts[parts.length - 1] === "LinkedIn") {
+        title = parts.slice(0, -2).join(" | ");
+      }
     }
 
     const compLink = document.querySelector('a[href*="/company/"]');
     const company = compLink ? compLink.innerText.trim() : "";
     const companyUrl = compLink ? compLink.href.split("?")[0] : "";
 
-    let location_ = "", reposted = "", applies = "", employment = "Full-time";
-    const dot = String.fromCharCode(183);
-    const bodyText = document.body.innerText;
-    for (const line of bodyText.split("\n")) {
-      if (line.includes(dot) && (line.includes("applicant") || line.includes("ago") || line.includes("clicked"))) {
-        const ps = line.split(dot).map((p) => p.trim());
-        location_ = ps[0] || "";
-        for (const p of ps.slice(1)) {
-          const pl = p.toLowerCase();
-          if (pl.includes("reposted") || pl.includes("ago")) reposted = p.replace("Reposted ", "");
-          else if (pl.includes("applicant") || pl.includes("clicked") || pl.includes("people")) applies = p;
-        }
-        break;
-      }
-    }
-    for (const emp of ["Full-time", "Part-time", "Contract", "Internship", "Temporary"]) {
-      if (bodyText.includes(emp)) { employment = emp; break; }
-    }
+    const bodyText = document.body ? document.body.innerText : "";
+    const top = parseTopCardFromBody(bodyText);
 
     const descEl = getJobDescription();
+    let descHtml = "", descText = "";
+    if (descEl) {
+      descHtml = descEl.innerHTML;
+      descText = descEl.innerText.trim();
+    }
+    // Fulltext fallback if description element is missing or too short
+    if (!descText || descText.length < 50) {
+      const fallback = extractDescriptionFulltext(bodyText);
+      if (fallback) { descText = fallback; descHtml = ""; }
+    }
 
     return {
       url, job_id: jobId, title, company, company_url: companyUrl,
-      location: location_, employment, applies, reposted,
-      description_html: descEl ? descEl.innerHTML : "",
-      description_text: descEl ? descEl.innerText.trim() : "",
+      location: top.location, employment: top.employment,
+      applies: top.applies, reposted: top.reposted,
+      description_html: descHtml, description_text: descText,
     };
+  }
+
+  function extractCurrentJob() {
+    const url = location.href;
+    const jobId = jobIdFromUrl(url);
+    if (!jobId) return null;
+    return extractJob(url, jobId);
   }
 
   // ── save single job ──────────────────────────────────────────────
 
   async function saveCurrentJob() {
-    const data = extractCurrentJob();
+    updateBtn("Extracting...", "working");
+    const data = await extractCurrentJob();
     if (!data) { updateBtn("No job ID", "error"); return; }
     updateBtn("Saving...", "working");
     try {
@@ -200,7 +315,120 @@
     setTimeout(renderActionButton, 4000);
   }
 
-  // ── autopilot: scroll list, click cards, parse each ──────────────
+  // ── autopilot: pagination-aware list crawler ─────────────────────
+
+  function getJobCards() {
+    const links = document.querySelectorAll(
+      '.scaffold-layout__list a[href*="/jobs/view/"], ' +
+      '.jobs-search-results-list a[href*="/jobs/view/"], ' +
+      'a.job-card-container__link, a.job-card-list__title, ' +
+      '[data-occludable-job-id]'
+    );
+    const seen = new Set();
+    const result = [];
+    for (const a of links) {
+      let id, href;
+      if (a.href) { id = jobIdFromUrl(a.href); href = a.href; }
+      else if (a.dataset && a.dataset.occludableJobId) {
+        id = a.dataset.occludableJobId;
+        const inner = a.querySelector('a[href*="/jobs/view/"]');
+        href = inner ? inner.href : `https://www.linkedin.com/jobs/view/${id}/`;
+      }
+      if (id && !seen.has(id)) { seen.add(id); result.push({ id, href, el: a }); }
+    }
+    return result;
+  }
+
+  function getClickableCardEl(id) {
+    // Find a clickable anchor for this job id on the list
+    const a = document.querySelector(
+      `a[href*="/jobs/view/${id}"], a[href*="currentJobId=${id}"], ` +
+      `[data-occludable-job-id="${id}"] a[href*="/jobs/view/"]`
+    );
+    return a;
+  }
+
+  function getScrollContainer() {
+    for (const sel of [
+      '.scaffold-layout__list .jobs-search-results-list',
+      '.scaffold-layout__list > div',
+      '.scaffold-layout__list',
+      '.jobs-search-results-list',
+    ]) {
+      const el = document.querySelector(sel);
+      if (el && el.scrollHeight > el.clientHeight) return el;
+    }
+    return null;
+  }
+
+  async function scrollListToBottom(maxAttempts = 15) {
+    const container = getScrollContainer();
+    if (!container) { window.scrollBy(0, 2000); await sleep(1500); return; }
+    for (let i = 0; i < maxAttempts; i++) {
+      if (autopilotAbort) return;
+      container.scrollBy(0, 600);
+      await sleep(1500);
+      const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 50;
+      if (atBottom) { await sleep(2000); return; }
+    }
+  }
+
+  async function processCurrentPage(stats) {
+    // Scroll to load all cards
+    let prev = 0;
+    for (let i = 0; i < 20; i++) {
+      if (autopilotAbort) return;
+      await scrollListToBottom(1);
+      const n = getJobCards().length;
+      updateBtn(`Loading... (${n} cards)`, "working");
+      if (n === prev) break;
+      prev = n;
+    }
+
+    const cards = getJobCards();
+    updateBtn(`${cards.length} jobs on this page`, "working");
+    await sleep(800);
+
+    for (let i = 0; i < cards.length; i++) {
+      if (autopilotAbort) return;
+      const card = cards[i];
+
+      // Check ban on each iteration
+      const ban = detectBan();
+      if (ban) { stats.banned = ban; return; }
+
+      updateBtn(`[${i + 1}/${cards.length}] page ${stats.page} (${stats.saved} saved)`, "working");
+
+      try {
+        const clickEl = getClickableCardEl(card.id) || card.el;
+        clickEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        await sleep(500);
+        clickEl.click();
+        await randomDelay(2500, 5000);
+        if (autopilotAbort) return;
+
+        const data = await extractJob(card.href, card.id);
+        if (!data.description_text && !data.description_html) {
+          stats.failed++;
+          continue;
+        }
+
+        const r = await fetch(`${API}/api/parse`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const res = await r.json();
+        if (res.status === "saved") stats.saved++;
+        else if (res.status === "exists") stats.skipped++;
+        else if (res.error === "daily_cap") { stats.capReached = true; return; }
+        else stats.failed++;
+      } catch { stats.failed++; }
+
+      // Humanized delay between jobs (parity with config.PARSE_DELAY_MIN/MAX)
+      await randomDelay(8000, 20000);
+    }
+  }
 
   async function runAutopilot() {
     if (autopilotRunning) {
@@ -210,113 +438,65 @@
     }
     autopilotRunning = true;
     autopilotAbort = false;
-    let saved = 0, skipped = 0, failed = 0;
 
-    const getCards = () => {
-      const links = document.querySelectorAll(
-        '.scaffold-layout__list a[href*="/jobs/view/"], ' +
-        '.jobs-search-results-list a[href*="/jobs/view/"], ' +
-        'a.job-card-container__link, a.job-card-list__title'
-      );
-      const seen = new Set();
-      const result = [];
-      for (const a of links) {
-        const id = jobIdFromUrl(a.href);
-        if (id && !seen.has(id)) { seen.add(id); result.push({ el: a, id, href: a.href }); }
-      }
-      return result;
-    };
+    const pageSize = isSearchPage() ? 25 : 24;
+    const startUrl = new URL(location.href);
+    const initialStart = parseInt(startUrl.searchParams.get("start") || "0");
 
-    const scrollList = () => {
-      for (const sel of [
-        '.scaffold-layout__list .jobs-search-results-list',
-        '.scaffold-layout__list > div',
-        '.scaffold-layout__list',
-      ]) {
-        const el = document.querySelector(sel);
-        if (el && el.scrollHeight > el.clientHeight) { el.scrollBy(0, 600); return true; }
-      }
-      return false;
-    };
+    const stats = { saved: 0, skipped: 0, failed: 0, page: 1, capReached: false, banned: null };
+    let consecutiveEmpty = 0;
+    let start = initialStart;
 
-    updateBtn("Loading cards...", "working");
-
-    // Scroll to load all visible cards
-    let prevCount = 0;
-    for (let i = 0; i < 20; i++) {
-      scrollList();
-      await sleep(1500);
-      const cards = getCards();
-      updateBtn(`Loading... (${cards.length} cards)`, "working");
-      if (cards.length === prevCount) break;
-      prevCount = cards.length;
+    while (!autopilotAbort) {
+      await processCurrentPage(stats);
+      if (stats.capReached) { updateBtn(`Cap! ${stats.saved} saved`, "error"); break; }
+      if (stats.banned) { updateBtn(`BAN detected — stopped`, "error"); console.warn("jm: ban", stats.banned); break; }
       if (autopilotAbort) break;
-    }
 
-    const allCards = getCards();
-    updateBtn(`${allCards.length} jobs found`, "working");
-    await sleep(1000);
-
-    for (let i = 0; i < allCards.length; i++) {
-      if (autopilotAbort) break;
-      const card = allCards[i];
-      updateBtn(`[${i + 1}/${allCards.length}] Parsing... (${saved} saved)`, "working");
-
-      try {
-        card.el.scrollIntoView({ behavior: "smooth", block: "center" });
-        await sleep(500);
-        card.el.click();
-        await randomDelay(2500, 5000);
-
-        // Extract from the now-loaded detail panel
-        const descEl = getJobDescription();
-        if (!descEl) { failed++; continue; }
-
-        const titleEl = document.querySelector(
-          '.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1.t-24, h2.t-24'
-        );
-        const title = titleEl ? titleEl.innerText.trim() : "Unknown Role";
-
-        const compLink = document.querySelector('a[href*="/company/"]');
-        const company = compLink ? compLink.innerText.trim() : "";
-        const companyUrl = compLink ? compLink.href.split("?")[0] : "";
-
-        let location_ = "";
-        const topCardEl = document.querySelector(
-          '.job-details-jobs-unified-top-card__primary-description-container, ' +
-          '.jobs-unified-top-card__subtitle-primary-grouping'
-        );
-        if (topCardEl) {
-          const dot = String.fromCharCode(183);
-          const topText = topCardEl.innerText;
-          if (topText.includes(dot)) location_ = topText.split(dot)[0].trim();
+      // Check if this page added new vacancies
+      const addedOnThisPage = stats.saved + stats.skipped;
+      if (addedOnThisPage === 0) {
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= 2) {
+          updateBtn(`Done: 2 empty pages → stop`, "success");
+          break;
         }
+      } else {
+        consecutiveEmpty = 0;
+      }
 
-        const data = {
-          url: card.href, job_id: card.id, title, company, company_url: companyUrl,
-          location: location_, employment: "Full-time", applies: "", reposted: "",
-          description_html: descEl.innerHTML, description_text: descEl.innerText.trim(),
-        };
+      // Navigate to next page (pagination)
+      start += pageSize;
+      stats.page++;
+      const nextUrl = urlWithStart(start);
+      updateBtn(`Next page: start=${start}`, "working");
+      await randomDelay(4000, 9000);
+      if (autopilotAbort) break;
 
-        const r = await fetch(`${API}/api/parse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        const res = await r.json();
-        if (res.status === "saved") saved++;
-        else if (res.status === "exists") skipped++;
-        else if (res.error === "daily_cap") { updateBtn(`Cap! ${saved} saved`, "error"); break; }
-        else failed++;
-      } catch { failed++; }
-
-      await randomDelay(3000, 8000);
+      // Use history.pushState + manual reload? No — LinkedIn is an SPA,
+      // direct location change works and re-triggers content script.
+      // But that would lose our running JS state. Instead use
+      // window.location.replace which keeps autopilot state lost…
+      // Solution: we stay here but mutate the URL — LinkedIn SPA
+      // picks up ?start= via its own router after a moment, OR we fall
+      // back to hard navigate.
+      try {
+        window.history.pushState({}, "", nextUrl);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      } catch {
+        location.href = nextUrl;
+        return; // page reload — state lost, but pagination happens
+      }
+      await sleep(3000);
     }
 
+    updateBtn(
+      `Done p.${stats.page}: ${stats.saved} saved, ${stats.skipped} skip, ${stats.failed} fail`,
+      "success"
+    );
     autopilotRunning = false;
     autopilotAbort = false;
-    updateBtn(`Done: ${saved} saved, ${skipped} skip, ${failed} fail`, "success");
-    setTimeout(renderActionButton, 8000);
+    setTimeout(renderActionButton, 10000);
   }
 
   // ── floating action button ───────────────────────────────────────
@@ -324,7 +504,8 @@
   function updateBtn(text, state) {
     const btn = document.getElementById(BTN_ID);
     if (!btn) return;
-    btn.querySelector(".jm-btn-text").textContent = text;
+    const t = btn.querySelector(".jm-btn-text");
+    if (t) t.textContent = text;
     btn.className = `jm-action-btn jm-${state}`;
   }
 

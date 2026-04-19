@@ -61,6 +61,21 @@ venv/bin/uvicorn chrome_plugin.api_server:app --reload --port 8000
 #    Click the extension icon for the full dashboard
 ```
 
+### Tests
+
+The API server and `config.py` have pytest coverage. Each test builds an
+isolated throwaway vault in `tmp_path`, so real data is never touched.
+
+```bash
+venv/bin/pytest tests/ -v
+```
+
+29 tests cover: health, rate limiter (persist, reset, cap), dashboard
+freshness, skill search + autocomplete, skill detail, skill detection
+(with synonyms), POST /api/parse (creates files, idempotent, respects
+daily cap, HTML→Markdown), matcher, gaps, companies, cache invalidation,
+backoff math.
+
 ### Future: multi-user service
 
 > The current architecture is local-first (vault on disk, localhost API).
