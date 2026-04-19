@@ -1,10 +1,30 @@
 (() => {
-  const API = "http://127.0.0.1:8000";
   const PANEL_ID = "jm-skill-panel";
   const BTN_ID = "jm-action-btn";
   let detected = [];
   let autopilotRunning = false;
   let autopilotAbort = false;
+
+  // ── API proxy: route every request through background service worker
+  //    so we don't hit CORS / host_permissions edge cases in MV3 ──────
+
+  function apiCall(method, path, body) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "api", method, path, body },
+        (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { ok: false, error: "no response" });
+          }
+        }
+      );
+    });
+  }
+
+  const apiGet = (path) => apiCall("GET", path);
+  const apiPost = (path, body) => apiCall("POST", path, body);
 
   // ── helpers ──────────────────────────────────────────────────────
 
@@ -154,14 +174,11 @@
     if (!descEl) return;
     const text = descEl.innerText;
     if (text.length < 30) return;
-    try {
-      const r = await fetch(`${API}/api/detect?text=${encodeURIComponent(text.slice(0, 5000))}`);
-      if (!r.ok) return;
-      const data = await r.json();
-      detected = data.detected || [];
-      renderPanel(detected);
-      highlightSkills(descEl, detected);
-    } catch { /* API offline */ }
+    const r = await apiGet(`/api/detect?text=${encodeURIComponent(text.slice(0, 5000))}`);
+    if (!r.ok) return; // API offline / error
+    detected = r.data.detected || [];
+    renderPanel(detected);
+    highlightSkills(descEl, detected);
   }
 
   // ── click "Show more" to expand description (parse_job.py parity) ─
@@ -300,18 +317,13 @@
     const data = await extractCurrentJob();
     if (!data) { updateBtn("No job ID", "error"); return; }
     updateBtn("Saving...", "working");
-    try {
-      const r = await fetch(`${API}/api/parse`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const res = await r.json();
-      if (res.status === "saved") updateBtn(`Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`, "success");
-      else if (res.status === "exists") updateBtn("Already saved", "exists");
-      else if (res.error === "daily_cap") updateBtn("Daily cap reached", "error");
-      else updateBtn("Error: " + (res.error || "unknown"), "error");
-    } catch { updateBtn("API offline", "error"); }
+    const r = await apiPost("/api/parse", data);
+    if (!r.ok) { updateBtn("API offline", "error"); setTimeout(renderActionButton, 4000); return; }
+    const res = r.data;
+    if (res.status === "saved") updateBtn(`Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`, "success");
+    else if (res.status === "exists") updateBtn("Already saved", "exists");
+    else if (res.error === "daily_cap") updateBtn("Daily cap reached", "error");
+    else updateBtn("Error: " + (res.error || "unknown"), "error");
     setTimeout(renderActionButton, 4000);
   }
 
@@ -413,16 +425,15 @@
           continue;
         }
 
-        const r = await fetch(`${API}/api/parse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        const res = await r.json();
-        if (res.status === "saved") stats.saved++;
-        else if (res.status === "exists") stats.skipped++;
-        else if (res.error === "daily_cap") { stats.capReached = true; return; }
-        else stats.failed++;
+        const r = await apiPost("/api/parse", data);
+        if (!r.ok) { stats.failed++; }
+        else {
+          const res = r.data;
+          if (res.status === "saved") stats.saved++;
+          else if (res.status === "exists") stats.skipped++;
+          else if (res.error === "daily_cap") { stats.capReached = true; return; }
+          else stats.failed++;
+        }
       } catch { stats.failed++; }
 
       // Humanized delay between jobs (parity with config.PARSE_DELAY_MIN/MAX)
