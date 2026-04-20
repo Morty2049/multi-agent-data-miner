@@ -3,7 +3,7 @@
   "name": "Job Miner — Skills Intelligence",
   "version": "1.0.0",
   "description": "LinkedIn job intelligence: skill detection, job matching, company insights, and skill gap analysis powered by your Obsidian vault.",
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab"],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "http://127.0.0.1:8000/*",

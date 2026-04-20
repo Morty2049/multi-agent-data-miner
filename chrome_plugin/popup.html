@@ -26,18 +26,9 @@
     <div id="api-status" class="api-dot offline" title="API offline"></div>
   </header>
 
-  <!-- tabs -->
-  <nav class="tabs">
-    <button class="tab active" data-tab="dashboard">Dashboard</button>
-    <button class="tab" data-tab="skills">Skills</button>
-    <button class="tab" data-tab="matcher">Matcher</button>
-    <button class="tab" data-tab="companies">Companies</button>
-    <button class="tab" data-tab="gaps">Gaps</button>
-  </nav>
-
-  <!-- ═══ DASHBOARD ═══ -->
-  <section id="tab-dashboard" class="panel active">
-    <div class="stats-grid" id="stats-grid">
+  <!-- Dashboard (only view) -->
+  <section class="panel active">
+    <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-value" id="stat-vacancies">—</div>
         <div class="stat-label">Vacancies</div>
@@ -46,61 +37,19 @@
         <div class="stat-value" id="stat-companies">—</div>
         <div class="stat-label">Companies</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-skills">—</div>
-        <div class="stat-label">Skills</div>
+    </div>
+
+    <div class="today-card">
+      <div class="today-row">
+        <span class="today-label">Parsed today</span>
+        <span class="today-value" id="today-value">—</span>
+      </div>
+      <div class="today-bar-track">
+        <div class="today-bar-fill" id="today-bar" style="width:0%"></div>
       </div>
     </div>
+
     <div id="data-freshness" class="data-freshness"></div>
-
-    <h3>Top Skills in Market</h3>
-    <div id="top-skills-chart" class="bar-chart"></div>
-
-    <h3>Top Locations</h3>
-    <div id="top-locations" class="tag-cloud"></div>
-
-    <h3>Employment Types</h3>
-    <div id="employment-types" class="tag-cloud"></div>
-  </section>
-
-  <!-- ═══ SKILLS ═══ -->
-  <section id="tab-skills" class="panel">
-    <div class="search-box">
-      <input type="text" id="skill-search" placeholder="Search skills (e.g. Kubernetes, Python)..." />
-    </div>
-    <div id="skill-results" class="list"></div>
-    <div id="skill-detail" class="detail-panel hidden"></div>
-  </section>
-
-  <!-- ═══ MATCHER ═══ -->
-  <section id="tab-matcher" class="panel">
-    <div id="matcher-chips" class="chips-container"></div>
-    <div class="search-box" style="position:relative;">
-      <input type="text" id="matcher-input" placeholder="Type skill name..." autocomplete="off" />
-      <button id="matcher-btn" class="btn-primary">Match</button>
-      <button id="matcher-clear" class="btn-clear" title="Clear all">&times;</button>
-      <div id="matcher-autocomplete" class="autocomplete-dropdown"></div>
-    </div>
-    <div class="hint">Type to search skills, click to add, then hit Match. Skills are saved between sessions.</div>
-    <div id="matcher-results" class="list"></div>
-  </section>
-
-  <!-- ═══ COMPANIES ═══ -->
-  <section id="tab-companies" class="panel">
-    <div class="search-box">
-      <input type="text" id="company-search" placeholder="Search companies..." />
-    </div>
-    <div id="company-results" class="list"></div>
-  </section>
-
-  <!-- ═══ GAPS ═══ -->
-  <section id="tab-gaps" class="panel">
-    <div class="search-box">
-      <input type="text" id="gaps-input" placeholder="Your skills: Python, AWS, Docker..." />
-      <button id="gaps-btn" class="btn-primary">Analyze</button>
-    </div>
-    <div class="hint">Shows skills you're missing that appear in jobs matching your profile</div>
-    <div id="gaps-results" class="list"></div>
   </section>
 
   <script src="popup.js"></script>
