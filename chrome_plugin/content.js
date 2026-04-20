@@ -88,7 +88,8 @@
 
   // ── skill detection (unchanged) ──────────────────────────────────
 
-  function getJobDescription() {
+  function getJobDescription(scope) {
+    const root = scope || document;
     const selectors = [
       "#job-details",
       ".jobs-description__content",
@@ -98,7 +99,7 @@
       "article",
     ];
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
+      const el = root.querySelector(sel);
       if (el && el.innerText.trim().length > 50) return el;
     }
     return null;
@@ -255,14 +256,34 @@
     return result;
   }
 
+  // Find the detail-panel container (right-hand pane on list pages, or the
+  // full page on /jobs/view/*). All other DOM queries scope inside this.
+  function getDetailPanel() {
+    const selectors = [
+      ".jobs-search__job-details",
+      ".jobs-details",
+      ".job-view-layout",
+      ".scaffold-layout__detail",
+      ".jobs-details__main-content",
+      "main",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.innerText && el.innerText.length > 200) return el;
+    }
+    return document.body;
+  }
+
   // ── extract current job from DOM (used by single-save + autopilot) ─
 
   async function extractJob(url, jobId) {
     // Try to click "Show more" before reading description
     await clickShowMore();
 
+    const panel = getDetailPanel();
+
     const pageTitle = document.title || "";
-    const titleEl = document.querySelector(
+    const titleEl = panel.querySelector(
       '.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1.t-24, h2.t-24'
     );
     let title;
@@ -276,22 +297,32 @@
       }
     }
 
-    const compLink = document.querySelector('a[href*="/company/"]');
+    // Company: search within the detail panel only, so list-page autopilot
+    // doesn't grab the first card's company by mistake.
+    let compLink = panel.querySelector(
+      '.job-details-jobs-unified-top-card__company-name a, ' +
+      '.jobs-unified-top-card__company-name a, ' +
+      'a[data-tracking-control-name="public_jobs_topcard-org-name"]'
+    );
+    if (!compLink) compLink = panel.querySelector('a[href*="/company/"]');
     const company = compLink ? compLink.innerText.trim() : "";
     const companyUrl = compLink ? compLink.href.split("?")[0] : "";
 
-    const bodyText = document.body ? document.body.innerText : "";
-    const top = parseTopCardFromBody(bodyText);
+    // Scope top-card text to the panel (not document.body) — avoids
+    // grabbing the wrong card's metadata on list pages.
+    const panelText = panel.innerText || "";
+    const top = parseTopCardFromBody(panelText);
 
-    const descEl = getJobDescription();
+    const descEl = getJobDescription(panel);
     let descHtml = "", descText = "";
     if (descEl) {
       descHtml = descEl.innerHTML;
       descText = descEl.innerText.trim();
     }
-    // Fulltext fallback if description element is missing or too short
+    // Fulltext fallback if description element is missing or too short.
+    // Use panel text (not full document) to avoid catching other cards' text.
     if (!descText || descText.length < 50) {
-      const fallback = extractDescriptionFulltext(bodyText);
+      const fallback = extractDescriptionFulltext(panelText);
       if (fallback) { descText = fallback; descHtml = ""; }
     }
 
