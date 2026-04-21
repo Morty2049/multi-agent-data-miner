@@ -41,3 +41,6 @@ history.md
 .idea/
 .vscode/
 *.swp
+
+# Claude Code harness — per-machine config, worktrees, session state
+.claude/
