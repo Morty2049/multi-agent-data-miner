@@ -59,17 +59,20 @@
 .jm-saved-card:hover { opacity: 1; }
 
 /* ── Tally sidebar container (host-page styles only) ─────────── */
+/* top/height pair assumes LinkedIn's top nav ≈ 64px; revisit if LinkedIn
+   redesigns the nav. A future Task 3.x can measure the nav dynamically. */
 #tally-sidebar-container {
+  --tally-sidebar-width: 380px;
   position: fixed;
   top: 64px;
   right: 0;
-  width: 380px;
+  width: var(--tally-sidebar-width);
   height: calc(100vh - 84px);
   z-index: 9999;
   transition: transform .2s ease;
 }
 #tally-sidebar-container[data-collapsed="1"] {
-  transform: translateX(380px);
+  transform: translateX(var(--tally-sidebar-width));
 }
 #tally-sidebar-iframe {
   width: 100%;

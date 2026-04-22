@@ -1,4 +1,6 @@
 /* ── Tally sidebar (iframe-internal styles) ────────────────────── */
+/* Requires tokens.css to be loaded first — all var(--...) references
+   resolve against the root custom properties declared there. */
 
 body { margin: 0; padding: 16px; background: var(--panel-bg); color: var(--ink); }
 

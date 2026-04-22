@@ -34,7 +34,11 @@
       sidebarState.parsedToday    = r.data.parsed_today    ?? null;
       sidebarState.dailyCap       = r.data.daily_cap       ?? null;
     } else {
-      sidebarState.apiOnline = false;
+      sidebarState.apiOnline      = false;
+      sidebarState.totalVacancies = null;
+      sidebarState.totalCompanies = null;
+      sidebarState.parsedToday    = null;
+      sidebarState.dailyCap       = null;
     }
     publishStateToSidebar();
   }
@@ -57,9 +61,10 @@
     toggle.id = "tally-sidebar-toggle";
     toggle.textContent = collapsed ? "›" : "‹";
     toggle.setAttribute("aria-label", "Toggle Tally sidebar");
+    toggle.setAttribute("aria-expanded", String(!collapsed));
     toggle.addEventListener("click", () => {
-      const isCollapsed = container.dataset.collapsed === "1";
-      if (isCollapsed) {
+      const next = container.dataset.collapsed === "1" ? "0" : "1";
+      if (next === "0") {
         delete container.dataset.collapsed;
         toggle.textContent = "‹";
         localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "0");
@@ -68,6 +73,7 @@
         toggle.textContent = "›";
         localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
       }
+      toggle.setAttribute("aria-expanded", String(next !== "1"));
     });
 
     container.appendChild(toggle);
@@ -77,6 +83,9 @@
 
   // ── Sidebar message handler ──────────────────────────────────────
   window.addEventListener("message", (event) => {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    // Only accept messages from our own iframe's window
+    if (!iframe || event.source !== iframe.contentWindow) return;
     const data = event.data;
     if (!data || data.from !== "tally-sidebar") return;
     if (data.type === "sidebar.ready") {
@@ -90,7 +99,10 @@
         container.dataset.collapsed = "1";
         localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
       }
-      if (toggle) toggle.textContent = "›";
+      if (toggle) {
+        toggle.textContent = "›";
+        toggle.setAttribute("aria-expanded", "false");
+      }
     }
   });
 
@@ -618,6 +630,7 @@
     observer._timer = setTimeout(() => {
       markSavedCards();
       renderActionButton();
+      if (/\/jobs\//.test(location.href)) injectSidebar();
     }, 1200);
   });
 
