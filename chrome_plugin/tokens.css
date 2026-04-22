@@ -1,0 +1,39 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root{
+  /* ---- light (default) ---- */
+  --bg:        #f4f2ee;
+  --panel-bg:  #ffffff;
+  --surface:   #fafaf8;
+  --surface-2: #f2efe9;
+  --line:      #e6e2da;
+  --line-2:    #d7d1c4;
+  --ink:       #0f1013;
+  --ink-2:     #2a2d33;
+  --mute:      #666a70;
+  --mute-2:    #9aa0a6;
+  --accent:    #ef6a3a;   /* mascot orange */
+  --accent-2:  #2b6bd8;   /* mascot blue */
+  --ok:        #2f9e6a;
+  --warn:      #d6a33a;
+  --violet:    #7c5ce4;
+  --pill-bg:   #f1eee8;
+  --card-shadow: 0 1px 0 #ffffff inset, 0 1px 2px rgba(16,20,28,0.04);
+}
+[data-theme="dark"]{
+  --bg:        #0e1014;
+  --panel-bg:  #141720;
+  --surface:   #181b24;
+  --surface-2: #20242e;
+  --line:      rgba(255,255,255,0.08);
+  --line-2:    rgba(255,255,255,0.14);
+  --ink:       #f1f3f7;
+  --ink-2:     #c8cdd6;
+  --mute:      #8c93a1;
+  --mute-2:    #636a77;
+  --pill-bg:   rgba(255,255,255,0.05);
+  --card-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 24px -12px rgba(0,0,0,0.45);
+}
+
+.tally-font-display { font-family: "Inter Tight", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; }
+.tally-font-mono    { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; }

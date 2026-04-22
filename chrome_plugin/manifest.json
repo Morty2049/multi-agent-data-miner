@@ -25,6 +25,12 @@
   "background": {
     "service_worker": "background.js"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["tokens.css"],
+      "matches": ["https://www.linkedin.com/*"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
