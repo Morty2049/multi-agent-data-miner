@@ -1,4 +1,4 @@
-# Job Miner — LinkedIn → Obsidian via Chrome extension
+# Tally — LinkedIn → Obsidian via Chrome extension
 
 <img width="761" height="416" alt="image" src="https://github.com/user-attachments/assets/afbb84f7-56d1-4540-ab8d-ff125e129f1f" />
 
