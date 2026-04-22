@@ -510,13 +510,23 @@
     }
   }
 
+  // Single writer for the running flag — also syncs sidebar state.
+  // Every mutation of `autopilotRunning` must go through here, or the
+  // sidebar button will fall out of sync with reality (see Phase 1
+  // retro: button stuck on "Stop" after autopilot finished).
+  function setAutopilotRunning(val) {
+    autopilotRunning = val;
+    sidebarState.autopilotRunning = val;
+    publishStateToSidebar();
+  }
+
   async function runAutopilot() {
     if (autopilotRunning) {
       autopilotAbort = true;
       updateBtn("Stopping...", "working");
       return;
     }
-    autopilotRunning = true;
+    setAutopilotRunning(true);
     autopilotAbort = false;
 
     await refreshSavedIds();
@@ -575,12 +585,12 @@
       }
     }
 
+    setAutopilotRunning(false);
+    autopilotAbort = false;
     updateBtn(
       `Done p.${stats.page}: ${stats.saved} saved, ${stats.skipped} skip, ${stats.failed} fail`,
       "success"
     );
-    autopilotRunning = false;
-    autopilotAbort = false;
     setTimeout(renderActionButton, 10000);
   }
 
