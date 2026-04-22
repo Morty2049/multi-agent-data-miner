@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
-
 :root{
   /* ---- light (default) ---- */
   --bg:        #f4f2ee;
@@ -21,6 +19,7 @@
   --card-shadow: 0 1px 0 #ffffff inset, 0 1px 2px rgba(16,20,28,0.04);
 }
 [data-theme="dark"]{
+  /* --accent, --accent-2, --ok, --warn, --violet are theme-invariant (inherited from :root) */
   --bg:        #0e1014;
   --panel-bg:  #141720;
   --surface:   #181b24;
@@ -35,5 +34,8 @@
   --card-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 24px -12px rgba(0,0,0,0.45);
 }
 
+/* Inter Tight / JetBrains Mono will be bundled as @font-face in a later
+   task; for now the system-ui fallback renders a similar-enough look
+   without a remote-font dependency (Chrome Web Store privacy compliance). */
 .tally-font-display { font-family: "Inter Tight", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; }
 .tally-font-mono    { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; }
