@@ -59,8 +59,15 @@
 .jm-saved-card:hover { opacity: 1; }
 
 /* ── Tally sidebar container (host-page styles only) ─────────── */
-/* top/height pair assumes LinkedIn's top nav ≈ 64px; revisit if LinkedIn
-   redesigns the nav. A future Task 3.x can measure the nav dynamically. */
+/* The sidebar OVERLAYS LinkedIn's right column rather than pushing the
+   page content left. Pushing would require injecting margin on
+   LinkedIn's scaffold layout (e.g. `.scaffold-layout__content`), which
+   breaks every time LinkedIn renames a class. The overlay trades a bit
+   of LinkedIn-visible real estate for durability; users can collapse
+   via the toggle. top/height pair assumes LinkedIn's top nav ≈ 64px.
+   Both — overlay vs. push, and the 64px magic number — will be
+   revisited in a later polish task when the sidebar UI is feature-
+   complete (match scoring, timeline, reply). */
 #tally-sidebar-container {
   --tally-sidebar-width: 380px;
   position: fixed;

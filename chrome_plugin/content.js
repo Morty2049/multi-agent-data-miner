@@ -145,6 +145,15 @@
            /\/jobs\/search/.test(location.href);
   }
 
+  // LinkedIn redirects to /help/, /authwall, /checkpoint, /challenge, or
+  // /uas/login when its anti-bot heuristics trip. Autopilot must detect
+  // this and stop immediately — continuing to click/extract against a
+  // safety page trains LinkedIn's detector and risks account restriction.
+  function isOnLinkedInSafetyPage() {
+    return /linkedin\.com\/(help\/|authwall|checkpoint|challenge|uas\/(login|authorize))/
+      .test(location.href);
+  }
+
   // ── parsed-ids sync ──────────────────────────────────────────────
 
   async function refreshSavedIds() {
@@ -525,6 +534,10 @@
     let consecutiveEmpty = 0;
 
     while (!autopilotAbort) {
+      if (isOnLinkedInSafetyPage()) {
+        updateBtn("⚠️ LinkedIn safety page — autopilot stopped", "error");
+        break;
+      }
       await processCurrentPage(stats);
       if (stats.capReached) { updateBtn(`Cap! ${stats.saved} saved`, "error"); break; }
       if (autopilotAbort) break;
@@ -556,6 +569,10 @@
         return;
       }
       await sleep(3000);
+      if (isOnLinkedInSafetyPage()) {
+        updateBtn("⚠️ LinkedIn safety page — autopilot stopped", "error");
+        break;
+      }
     }
 
     updateBtn(
@@ -601,6 +618,13 @@
         <span class="jm-btn-text">${already ? "Already in vault" : "Save to vault"}</span>`;
       btn.onclick = saveCurrentJob;
     } else if (isJobListPage()) {
+      // Sidebar owns Autopilot on list pages. Hide the floating button to
+      // avoid duplicate UI. Fallback: if sidebar failed to inject, still
+      // render the floating button so Autopilot stays reachable.
+      if (document.getElementById(SIDEBAR_CONTAINER_ID)) {
+        btn.style.display = "none";
+        return;
+      }
       btn.className = `jm-action-btn ${autopilotRunning ? "jm-working" : "jm-ready"}`;
       btn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

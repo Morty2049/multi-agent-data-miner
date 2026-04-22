@@ -4,53 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tally</title>
+  <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="popup.css" />
 </head>
-<body>
-  <!-- status bar -->
-  <div id="status-bar" class="status-bar hidden">
-    <span id="status-msg"></span>
-    <button id="status-close" class="status-close">&times;</button>
-  </div>
-
-  <!-- header -->
+<body class="tally-font-display">
   <header>
-    <div class="logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-        <path d="M2 17l10 5 10-5"/>
-        <path d="M2 12l10 5 10-5"/>
-      </svg>
-      <span>Tally</span>
-    </div>
-    <div id="api-status" class="api-dot offline" title="API offline"></div>
+    <span class="brand">Tally</span>
+    <span id="api-dot" class="api-dot" data-state="unknown" title="API status"></span>
   </header>
 
-  <!-- Dashboard (only view) -->
-  <section class="panel active">
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-value" id="stat-vacancies">—</div>
-        <div class="stat-label">Vacancies</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-companies">—</div>
-        <div class="stat-label">Companies</div>
-      </div>
-    </div>
+  <p class="hint">
+    Tally lives inside LinkedIn as a sidebar. Open a jobs page to use it.
+  </p>
 
-    <div class="today-card">
-      <div class="today-row">
-        <span class="today-label">Parsed today</span>
-        <span class="today-value" id="today-value">—</span>
-      </div>
-      <div class="today-bar-track">
-        <div class="today-bar-fill" id="today-bar" style="width:0%"></div>
-      </div>
-    </div>
+  <button id="open-jobs" class="primary">Open LinkedIn Jobs</button>
 
-    <div id="data-freshness" class="data-freshness"></div>
-  </section>
+  <p id="api-msg" class="api-msg hidden"></p>
 
   <script src="popup.js"></script>
 </body>
