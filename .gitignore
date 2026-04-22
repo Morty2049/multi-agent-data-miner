@@ -44,3 +44,21 @@ history.md
 
 # Claude Code harness — per-machine config, worktrees, session state
 .claude/
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+.gsd-id
+.mcp.json
+.bg-shell/
+Thumbs.db
+*.swo
+*~
+*.code-workspace
+node_modules/
+.next/
+dist/
+build/
+target/
+vendor/
+coverage/
+.cache/
