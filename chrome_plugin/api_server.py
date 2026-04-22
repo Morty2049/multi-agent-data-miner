@@ -41,7 +41,7 @@ DATA = config.DATA_DIR
 VACANCIES_DIR = VAULT / "Vacancies"
 COMPANIES_DIR = VAULT / "Companies"
 
-app = FastAPI(title="Tally API", version="2.0.0")
+app = FastAPI(title="Tally API", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

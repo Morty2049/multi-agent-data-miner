@@ -35,7 +35,7 @@ the DOM LinkedIn already rendered for you.
     └────────────────────────┘   see "Legacy skills enrichment" below)
 ```
 
-## What the plugin does
+## What Tally does
 
 | Where | What |
 |---|---|
@@ -85,7 +85,8 @@ throwaway vault — your real data is never touched.
 `JOB_MINER_DAILY_CAP` in `.env` (default 600) caps how many vacancies
 `/api/parse` will accept per day, persisted in `data/rate_limit.json`.
 Prevents a runaway autopilot from spamming the vault; resets at midnight
-local time.
+local time. (The `JOB_MINER_` env-var prefix is kept for backward
+compatibility with existing `.env` files from before the Tally rename.)
 
 ## Pre-commit hook
 
