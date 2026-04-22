@@ -57,3 +57,39 @@
   transition: opacity 0.2s;
 }
 .jm-saved-card:hover { opacity: 1; }
+
+/* ── Tally sidebar container (host-page styles only) ─────────── */
+#tally-sidebar-container {
+  position: fixed;
+  top: 64px;
+  right: 0;
+  width: 380px;
+  height: calc(100vh - 84px);
+  z-index: 9999;
+  transition: transform .2s ease;
+}
+#tally-sidebar-container[data-collapsed="1"] {
+  transform: translateX(380px);
+}
+#tally-sidebar-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 12px 0 0 12px;
+  background: #fff;
+  box-shadow: -8px 0 32px rgba(0,0,0,0.12);
+}
+#tally-sidebar-toggle {
+  position: absolute;
+  top: 20px;
+  left: -24px;
+  width: 24px;
+  height: 40px;
+  background: #ef6a3a;
+  color: #fff;
+  border: 0;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}

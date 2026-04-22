@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tally</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body class="tally-font-display">
+  <header class="tally-header">
+    <span class="tally-brand">Tally</span>
+    <span id="tally-status-dot" class="tally-status-dot tally-dot-unknown"></span>
+    <button id="tally-close" class="tally-close-btn" aria-label="Close sidebar">×</button>
+  </header>
+
+  <section class="tally-stats">
+    <div class="tally-stat-card">
+      <div id="tally-vacancies" class="tally-stat-value">—</div>
+      <div class="tally-stat-label">Vacancies</div>
+    </div>
+    <div class="tally-stat-card">
+      <div id="tally-companies" class="tally-stat-value">—</div>
+      <div class="tally-stat-label">Companies</div>
+    </div>
+    <div class="tally-stat-card">
+      <div id="tally-today" class="tally-stat-value">—</div>
+      <div class="tally-stat-label">Today</div>
+    </div>
+  </section>
+
+  <section class="tally-autopilot">
+    <button id="tally-autopilot-btn" class="tally-primary-btn">Autopilot</button>
+    <p id="tally-progress" class="tally-progress-text"></p>
+  </section>
+
+  <script src="sidebar.js"></script>
+</body>
+</html>

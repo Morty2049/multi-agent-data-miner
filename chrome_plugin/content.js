@@ -1,5 +1,99 @@
 (() => {
   const BTN_ID = "jm-action-btn";
+
+  // ── Sidebar constants & state ────────────────────────────────────
+  const SIDEBAR_ID            = "tally-sidebar-iframe";
+  const SIDEBAR_CONTAINER_ID  = "tally-sidebar-container";
+  const SIDEBAR_COLLAPSED_KEY = "tally-sidebar-collapsed";
+
+  const sidebarState = {
+    apiOnline:         null,
+    totalVacancies:    null,
+    totalCompanies:    null,
+    parsedToday:       null,
+    dailyCap:          null,
+    autopilotRunning:  false,
+    autopilotProgress: "",
+  };
+
+  function publishStateToSidebar() {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "state", payload: { ...sidebarState } },
+      "*"
+    );
+  }
+
+  async function refreshDashboard() {
+    const r = await apiGet("/api/dashboard");
+    if (r.ok && r.data) {
+      sidebarState.apiOnline      = true;
+      sidebarState.totalVacancies = r.data.total_vacancies ?? null;
+      sidebarState.totalCompanies = r.data.total_companies ?? null;
+      sidebarState.parsedToday    = r.data.parsed_today    ?? null;
+      sidebarState.dailyCap       = r.data.daily_cap       ?? null;
+    } else {
+      sidebarState.apiOnline = false;
+    }
+    publishStateToSidebar();
+  }
+
+  function injectSidebar() {
+    if (document.getElementById(SIDEBAR_CONTAINER_ID)) return;
+
+    const container = document.createElement("div");
+    container.id = SIDEBAR_CONTAINER_ID;
+
+    const collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    if (collapsed) container.dataset.collapsed = "1";
+
+    const iframe = document.createElement("iframe");
+    iframe.id  = SIDEBAR_ID;
+    iframe.src = chrome.runtime.getURL("sidebar.html");
+    iframe.title = "Tally sidebar";
+
+    const toggle = document.createElement("button");
+    toggle.id = "tally-sidebar-toggle";
+    toggle.textContent = collapsed ? "›" : "‹";
+    toggle.setAttribute("aria-label", "Toggle Tally sidebar");
+    toggle.addEventListener("click", () => {
+      const isCollapsed = container.dataset.collapsed === "1";
+      if (isCollapsed) {
+        delete container.dataset.collapsed;
+        toggle.textContent = "‹";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "0");
+      } else {
+        container.dataset.collapsed = "1";
+        toggle.textContent = "›";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
+      }
+    });
+
+    container.appendChild(toggle);
+    container.appendChild(iframe);
+    document.body.appendChild(container);
+  }
+
+  // ── Sidebar message handler ──────────────────────────────────────
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.from !== "tally-sidebar") return;
+    if (data.type === "sidebar.ready") {
+      refreshDashboard();
+    } else if (data.type === "autopilot.toggle") {
+      runAutopilot();
+    } else if (data.type === "sidebar.close") {
+      const container = document.getElementById(SIDEBAR_CONTAINER_ID);
+      const toggle    = document.getElementById("tally-sidebar-toggle");
+      if (container) {
+        container.dataset.collapsed = "1";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
+      }
+      if (toggle) toggle.textContent = "›";
+    }
+  });
+
   let autopilotRunning = false;
   let autopilotAbort = false;
   let savedIds = new Set(); // job_ids already in vault
@@ -469,6 +563,9 @@
     const t = btn.querySelector(".jm-btn-text");
     if (t) t.textContent = text;
     btn.className = `jm-action-btn jm-${state}`;
+    sidebarState.autopilotProgress = text;
+    sidebarState.autopilotRunning  = autopilotRunning;
+    publishStateToSidebar();
   }
 
   function renderActionButton() {
@@ -525,7 +622,11 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
-  setTimeout(onPageUpdate, 2000);
+  setTimeout(() => {
+    onPageUpdate();
+    if (/\/jobs\//.test(location.href)) injectSidebar();
+  }, 2000);
   // Re-sync periodically in case the vault changes server-side
   setInterval(refreshSavedIds, 60000);
+  setInterval(refreshDashboard, 60000);
 })();
