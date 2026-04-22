@@ -26,6 +26,49 @@ def test_rate_initial_state(client):
     assert body["remaining"] == 600
 
 
+# ── settings endpoints ────────────────────────────────────────────
+
+def test_get_settings_returns_defaults_when_file_missing(client):
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["mode"] == "regular"
+    assert "delays_ms" in d and "click_min" in d["delays_ms"]
+
+
+def test_put_settings_merges_and_persists(client):
+    r = client.put("/api/settings", json={"daily_cap": 123})
+    assert r.status_code == 200
+    assert r.json()["daily_cap"] == 123
+    # Reload via GET
+    assert client.get("/api/settings").json()["daily_cap"] == 123
+
+
+def test_put_settings_returns_error_on_invalid_cap(client):
+    r = client.put("/api/settings", json={"daily_cap": 999999})
+    assert r.json().get("error") == "invalid_settings"
+
+
+def test_put_settings_null_cap_makes_parse_unlimited(client):
+    client.put("/api/settings", json={"daily_cap": None})
+    body = client.get("/api/rate").json()
+    assert body["daily_cap"] >= 10**8  # unlimited sentinel
+
+
+def test_apply_preset_endpoint_writes_preset(client):
+    r = client.post("/api/settings/preset/fast")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["mode"] == "fast"
+    assert d["daily_cap"] == 1500
+    assert d["randomize_delays"] is False
+
+
+def test_apply_preset_unknown_returns_error(client):
+    r = client.post("/api/settings/preset/turbo")
+    assert r.json().get("error") == "invalid_preset"
+
+
 # ── dashboard ─────────────────────────────────────────────────────
 
 def test_dashboard_minimal_fields(client):

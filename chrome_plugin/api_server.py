@@ -143,7 +143,7 @@ def health():
 def rate_status():
     return {
         "parsed_today": config.parsed_today(),
-        "daily_cap": config.DAILY_PARSE_CAP,
+        "daily_cap": config.effective_cap(),
         "remaining": config.remaining_today(),
     }
 
@@ -161,11 +161,36 @@ def dashboard():
         "total_vacancies": len(vacancies),
         "total_companies": _count_companies(),
         "parsed_today": config.parsed_today(),
-        "daily_cap": config.DAILY_PARSE_CAP,
+        "daily_cap": config.effective_cap(),
         "remaining_today": config.remaining_today(),
         "last_parsed_date": last_parsed,
         "data_age_days": age,
     }
+
+
+@app.get("/api/settings")
+def get_settings():
+    return config.load_settings()
+
+
+@app.put("/api/settings")
+def update_settings(payload: dict):
+    """Merge-patch user settings. Accepts any subset of the settings
+    schema. Returns the full merged state after write, or a 400-like
+    JSON error (no HTTPException to stay consistent with the rest of
+    the error surface which returns {"error": ..., "message": ...})."""
+    try:
+        return config.save_settings(payload)
+    except ValueError as e:
+        return {"error": "invalid_settings", "message": str(e)}
+
+
+@app.post("/api/settings/preset/{name}")
+def apply_settings_preset(name: str):
+    try:
+        return config.apply_preset(name)
+    except ValueError as e:
+        return {"error": "invalid_preset", "message": str(e)}
 
 
 @app.get("/api/parsed-ids")
@@ -198,7 +223,7 @@ def parse_from_browser(req: ParseRequest):
     if not config.can_parse_more():
         return {
             "error": "daily_cap",
-            "message": f"Daily cap reached ({config.DAILY_PARSE_CAP})",
+            "message": f"Daily cap reached ({config.effective_cap()})",
         }
 
     job_id = req.job_id
