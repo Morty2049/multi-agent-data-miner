@@ -179,6 +179,32 @@
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
   function randomDelay(lo, hi) { return sleep(lo + Math.random() * (hi - lo)); }
 
+  // Autopilot reads user settings once at the top of each run. All
+  // mid-run delays flow through autopilotDelay(kind) which respects
+  // the fetched min/max pair + randomise flag. Falls back to the
+  // historical "regular" preset if the API is unreachable.
+  const _AUTOPILOT_FALLBACK = {
+    randomize_delays: true,
+    delays_ms: {
+      click_min:           2500, click_max:           5000,
+      between_saves_min:   8000, between_saves_max:  20000,
+      page_transition_min: 4000, page_transition_max: 9000,
+    },
+  };
+  let autopilotSettings = null;
+
+  async function loadAutopilotSettings() {
+    const r = await apiGet("/api/settings");
+    autopilotSettings = (r.ok && r.data && r.data.delays_ms) ? r.data : _AUTOPILOT_FALLBACK;
+  }
+
+  function autopilotDelay(kind) {
+    const s = autopilotSettings || _AUTOPILOT_FALLBACK;
+    const lo = s.delays_ms[`${kind}_min`];
+    const hi = s.delays_ms[`${kind}_max`];
+    return s.randomize_delays ? randomDelay(lo, hi) : sleep(lo);
+  }
+
   function jobIdFromUrl(url) {
     const m = url.match(/\/jobs\/view\/(\d+)/);
     if (m) return m[1];
@@ -549,7 +575,7 @@
         clickEl.scrollIntoView({ behavior: "smooth", block: "center" });
         await sleep(500);
         clickEl.click();
-        await randomDelay(2500, 5000);
+        await autopilotDelay("click");
         if (autopilotAbort) return;
 
         const data = await extractJob(card.href, card.id);
@@ -577,7 +603,7 @@
         }
       } catch { stats.failed++; }
 
-      await randomDelay(8000, 20000);
+      await autopilotDelay("between_saves");
     }
   }
 
@@ -600,6 +626,7 @@
     setAutopilotRunning(true);
     autopilotAbort = false;
 
+    await loadAutopilotSettings();
     await refreshSavedIds();
     markSavedCards();
 
@@ -639,7 +666,7 @@
       stats.page++;
       const nextUrl = urlWithStart(start);
       updateBtn(`Next page: start=${start}`, "working");
-      await randomDelay(4000, 9000);
+      await autopilotDelay("page_transition");
       if (autopilotAbort) break;
 
       try {
