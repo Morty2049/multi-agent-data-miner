@@ -11,6 +11,7 @@
   <header class="tally-header">
     <span class="tally-brand">Tally</span>
     <span id="tally-status-dot" class="tally-status-dot tally-dot-unknown"></span>
+    <button id="tally-gear" class="tally-icon-btn" aria-label="Open settings" aria-expanded="false" title="Settings">⚙</button>
     <button id="tally-close" class="tally-close-btn" aria-label="Close sidebar">×</button>
   </header>
 
@@ -39,6 +40,38 @@
   <section id="tally-autopilot-section" class="tally-autopilot">
     <button id="tally-autopilot-btn" class="tally-primary-btn">Autopilot</button>
     <p id="tally-progress" class="tally-progress-text"></p>
+  </section>
+
+  <section id="tally-settings-section" class="tally-settings tally-hidden">
+    <div class="tally-settings-row">
+      <span class="tally-settings-label">Autopilot mode</span>
+      <span id="tally-mode-badge" class="tally-mode-badge">—</span>
+    </div>
+    <div class="tally-presets">
+      <button type="button" class="tally-preset-btn" data-preset="stealth">Stealth</button>
+      <button type="button" class="tally-preset-btn" data-preset="regular">Regular</button>
+      <button type="button" class="tally-preset-btn" data-preset="fast">Fast</button>
+    </div>
+    <p class="tally-settings-hint" id="tally-preset-hint">Stealth = slow &amp; safe. Fast = short bursts, higher ban risk.</p>
+
+    <label class="tally-settings-row" for="tally-daily-cap-input">
+      <span class="tally-settings-label">Daily cap</span>
+    </label>
+    <div class="tally-cap-row">
+      <input type="number" id="tally-daily-cap-input" min="1" max="9999" placeholder="600" />
+      <label class="tally-checkbox">
+        <input type="checkbox" id="tally-daily-cap-unlimited" />
+        <span>Unlimited</span>
+      </label>
+    </div>
+
+    <label class="tally-checkbox tally-settings-row">
+      <input type="checkbox" id="tally-randomize" />
+      <span>Randomise delays</span>
+    </label>
+
+    <button id="tally-settings-save" class="tally-primary-btn">Save settings</button>
+    <p id="tally-settings-msg" class="tally-progress-text"></p>
   </section>
 
   <script src="sidebar.js"></script>

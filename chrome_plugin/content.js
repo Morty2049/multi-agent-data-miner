@@ -22,6 +22,11 @@
     pageMode:          "other",
     currentJob:        null,
     saveStatus:        null,
+    // Full settings object (mode, daily_cap, randomize_delays, delays_ms)
+    // as returned by GET /api/settings. Populated lazily on first
+    // sidebar.ready and refreshed after each save/preset apply so the
+    // settings panel always renders the latest server truth.
+    settings:          null,
   };
 
   function publishStateToSidebar() {
@@ -87,6 +92,51 @@
     publishStateToSidebar();
   }
 
+  // ── Settings wiring ─────────────────────────────────────────────
+  // Sidebar's gear panel reflects whatever GET /api/settings returns.
+  // User actions post {settings.save|settings.preset} messages; we
+  // hit the API, update state, and echo {settings.result} back so the
+  // panel can show "Saved ✓" or an error.
+
+  async function refreshSettings() {
+    const r = await apiGet("/api/settings");
+    if (r.ok && r.data) {
+      sidebarState.settings = r.data;
+      publishStateToSidebar();
+    }
+  }
+
+  function postSettingsResult(ok, error) {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "settings.result", payload: { ok, error } },
+      "*"
+    );
+  }
+
+  async function saveSettingsViaApi(payload) {
+    const r = await apiPut("/api/settings", payload || {});
+    if (!r.ok) { postSettingsResult(false, "API offline"); return; }
+    const body = r.data || {};
+    if (body.error) { postSettingsResult(false, body.message || body.error); return; }
+    sidebarState.settings = body;
+    publishStateToSidebar();
+    refreshDashboard();   // cap might have changed — update today counter
+    postSettingsResult(true);
+  }
+
+  async function applyPresetViaApi(name) {
+    const r = await apiPost(`/api/settings/preset/${encodeURIComponent(name)}`, {});
+    if (!r.ok) { postSettingsResult(false, "API offline"); return; }
+    const body = r.data || {};
+    if (body.error) { postSettingsResult(false, body.message || body.error); return; }
+    sidebarState.settings = body;
+    publishStateToSidebar();
+    refreshDashboard();
+    postSettingsResult(true);
+  }
+
   function injectSidebar() {
     if (document.getElementById(SIDEBAR_CONTAINER_ID)) return;
 
@@ -135,10 +185,18 @@
     if (data.type === "sidebar.ready") {
       refreshDashboard();
       publishPageContext();
+      refreshSettings();
     } else if (data.type === "autopilot.toggle") {
       runAutopilot();
     } else if (data.type === "job.save") {
       saveCurrentJob();
+    } else if (data.type === "settings.open") {
+      refreshSettings();
+    } else if (data.type === "settings.save") {
+      saveSettingsViaApi(data.payload);
+    } else if (data.type === "settings.preset") {
+      const name = data.payload && data.payload.name;
+      if (name) applyPresetViaApi(name);
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
@@ -171,8 +229,9 @@
     });
   }
 
-  const apiGet = (path) => apiCall("GET", path);
+  const apiGet  = (path)       => apiCall("GET",  path);
   const apiPost = (path, body) => apiCall("POST", path, body);
+  const apiPut  = (path, body) => apiCall("PUT",  path, body);
 
   // ── helpers ──────────────────────────────────────────────────────
 
