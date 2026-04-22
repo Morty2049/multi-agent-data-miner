@@ -46,3 +46,21 @@ def test_remaining_today_never_negative(tmp_path, monkeypatch):
     config.register_parse()
     config.register_parse()  # over the cap
     assert config.remaining_today() == 0  # clamped, not -1
+
+
+def test_env_overrides_vault_and_data_dirs(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    data = tmp_path / "data"
+    monkeypatch.setenv("JOB_MINER_VAULT_DIR", str(vault))
+    monkeypatch.setenv("JOB_MINER_DATA_DIR", str(data))
+    import importlib
+    import config
+    importlib.reload(config)
+    try:
+        assert config.VAULT_DIR == vault.resolve()
+        assert config.DATA_DIR == data.resolve()
+        assert config.RATE_LIMIT_FILE == data.resolve() / "rate_limit.json"
+    finally:
+        monkeypatch.delenv("JOB_MINER_VAULT_DIR", raising=False)
+        monkeypatch.delenv("JOB_MINER_DATA_DIR", raising=False)
+        importlib.reload(config)

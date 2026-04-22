@@ -57,9 +57,20 @@ def _env_int(name: str, default: int) -> int:
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
+#
+# By default the vault and data directories live next to this file.
+# `JOB_MINER_VAULT_DIR` / `JOB_MINER_DATA_DIR` override that — use them
+# when the server runs from a git worktree or container where `__file__`
+# isn't next to the real vault. Without overrides, each checkout gets
+# its own vault and saved vacancies silently diverge.
 
-DATA_DIR = REPO_ROOT / "data"
-VAULT_DIR = REPO_ROOT / "obsidian_vault"
+def _resolved_dir(env_name: str, default: Path) -> Path:
+    override = os.environ.get(env_name)
+    return Path(override).expanduser().resolve() if override else default
+
+
+DATA_DIR = _resolved_dir("JOB_MINER_DATA_DIR", REPO_ROOT / "data")
+VAULT_DIR = _resolved_dir("JOB_MINER_VAULT_DIR", REPO_ROOT / "obsidian_vault")
 RATE_LIMIT_FILE = DATA_DIR / "rate_limit.json"
 
 

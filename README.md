@@ -32,7 +32,7 @@ the DOM LinkedIn already rendered for you.
     ┌────────────────────────┐
     │ obsidian_vault/        │  Vacancies / Companies / Skills
     │  (your source of truth)│  (Skills graph built separately —
-    └────────────────────────┘   see "Skills enrichment" below)
+    └────────────────────────┘   see "Legacy skills enrichment" below)
 ```
 
 ## What the plugin does
@@ -95,55 +95,60 @@ Optional safety net to keep sessions / cookies / `.env` files out of git:
 git config core.hooksPath .githooks
 ```
 
-## Skills enrichment (offline, optional)
+## Legacy skills enrichment (offline, optional)
 
 The plugin writes raw Vacancy + Company markdown. Turning those into a
 linked skills graph is a separate LLM-powered step — it does not run
-from the plugin and does not need the plugin to be running.
+from the plugin and does not need the plugin to be running. All those
+scripts live in [`legacy/`](legacy/) and are kept around for one-shot
+maintenance, not active development. See [`legacy/README.md`](legacy/README.md)
+for the full inventory and usage.
 
-| Script | Purpose |
-|---|---|
-| `skills_miner_adk.py` | Two-agent Google-ADK pipeline: Extractor pulls skill candidates from a vacancy description, Reviewer normalizes them against the existing graph + synonym dictionary, writes `Skills/*.md` and `[[wikilinks]]` back into the vacancy |
-| `reorganize_vault.py` | One-off LLM dedup + cluster-tag pass across `Skills/` |
-| `merge_skills.py` | Rule-based dedup + broken-link repair |
-| `seed_graph.py` | Rebuild `data/skills_graph.json` from `Skills/*.md` (after manual edits) |
-| `build_manifest.py`, `fix_company_backlinks.py`, `recover_parsed.py` | Maintenance utilities |
+Quickest entry points (run from repo root so `obsidian_vault/` and
+`data/` resolve correctly):
 
-Set `GOOGLE_API_KEY` in `.env` before running `skills_miner_adk.py` or
-`reorganize_vault.py`.
+```bash
+venv/bin/python legacy/skills_miner_adk.py --limit 5 --dry-run   # test extraction
+venv/bin/python legacy/reorganize_vault.py --analyze              # LLM dedup manifest
+venv/bin/python legacy/seed_graph.py                              # rebuild graph json
+```
+
+Set `GOOGLE_API_KEY` in `.env` before running anything that calls Gemini
+(`skills_miner_adk.py`, `reorganize_vault.py`).
 
 ## Repository structure
 
 ```
-├── chrome_plugin/
+├── chrome_plugin/           — ACTIVE: Chrome extension + FastAPI backend
 │   ├── manifest.json, popup.{html,js,css}, content.{js,css}, background.js
 │   ├── api_server.py        — FastAPI backend
 │   ├── icons/
 │   └── requirements.txt
 │
-├── config.py                — shared paths + daily-cap rate limiter
-├── tests/                   — pytest suite
+├── config.py                — shared paths (with env overrides) + daily-cap rate limiter
+├── tests/                   — pytest suite for backend + config
 │
-├── skills_miner_adk.py      — LLM skills enrichment (offline)
-├── skills_tools.py          — file I/O helpers for the miner
-├── reorganize_vault.py      — LLM dedup + cluster tags
-├── merge_skills.py          — rule-based dedup
-├── seed_graph.py            — graph rebuild
-├── build_manifest.py        — static rename/delete manifest
-├── fix_company_backlinks.py — utility
-├── recover_parsed.py        — utility
+├── legacy/                  — offline one-shot scripts (skills enrichment, vault maintenance)
+│   ├── skills_miner_adk.py, skills_tools.py
+│   ├── reorganize_vault.py, merge_skills.py, seed_graph.py
+│   ├── build_manifest.py, fix_company_backlinks.py, recover_parsed.py
+│   └── README.md            — per-script purpose and usage
 │
-├── data/
+├── data/                    — runtime state (gitignored)
 │   ├── rate_limit.json       — daily cap counter (auto-managed)
-│   ├── skills_graph.json     — skills graph state
-│   ├── skill_synonyms.json   — abbreviation → canonical
-│   └── skills_mined.json     — processed-vacancy tracker for enrichment
+│   ├── skills_graph.json     — skills graph state (legacy)
+│   ├── skill_synonyms.json   — abbreviation → canonical (legacy)
+│   └── skills_mined.json     — processed-vacancy tracker for enrichment (legacy)
 │
-└── obsidian_vault/
+└── obsidian_vault/          — the source of truth (gitignored)
     ├── Vacancies/           — one .md per job (plugin-written)
     ├── Companies/           — one .md per company (plugin-written)
-    └── Skills/              — one .md per skill (enrichment step)
+    └── Skills/              — one .md per skill (legacy enrichment step)
 ```
+
+Active development focuses on `chrome_plugin/`, `config.py`, and `tests/`.
+Everything under `legacy/` is frozen — kept for historical vault
+maintenance, not rewritten to match the plugin's current design.
 
 ## Roadmap
 
