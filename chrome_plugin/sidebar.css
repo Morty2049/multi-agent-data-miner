@@ -38,7 +38,15 @@ body { margin: 0; padding: 16px; background: var(--panel-bg); color: var(--ink);
   letter-spacing: 0.04em;
 }
 
-/* Autopilot section */
+/* Visibility helper — sections toggle based on page context */
+.tally-hidden { display: none !important; }
+
+/* Current vacancy (visible only on /jobs/view/<id>) */
+.tally-vacancy { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.tally-vacancy-label { font-size: 11px; color: var(--mute); text-transform: uppercase; letter-spacing: 0.04em; }
+.tally-vacancy-title { font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+
+/* Primary button + variants */
 .tally-autopilot { display: flex; flex-direction: column; gap: 10px; }
 .tally-primary-btn {
   background: var(--accent);
@@ -51,5 +59,8 @@ body { margin: 0; padding: 16px; background: var(--panel-bg); color: var(--ink);
   cursor: pointer;
   width: 100%;
 }
+.tally-primary-btn:disabled { opacity: 0.85; cursor: default; }
 .tally-primary-btn.tally-btn-running { background: var(--warn); }
+.tally-primary-btn.tally-btn-saved   { background: var(--ok); }
+.tally-primary-btn.tally-btn-exists  { background: var(--mute); }
 .tally-progress-text { margin: 0; font-size: 12px; color: var(--mute); font-family: ui-monospace, monospace; }

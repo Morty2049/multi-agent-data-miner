@@ -14,6 +14,14 @@
     dailyCap:          null,
     autopilotRunning:  false,
     autopilotProgress: "",
+    // Per-page context for the sidebar. `pageMode` is "list" | "view" |
+    // "other"; `currentJob` is {jobId, title, saved} on view pages and
+    // null otherwise; `saveStatus` is {label, state, working} during and
+    // after a manual Save ("Save to vault" in the sidebar's Current
+    // Vacancy section).
+    pageMode:          "other",
+    currentJob:        null,
+    saveStatus:        null,
   };
 
   function publishStateToSidebar() {
@@ -40,6 +48,42 @@
       sidebarState.parsedToday    = null;
       sidebarState.dailyCap       = null;
     }
+    publishStateToSidebar();
+  }
+
+  // Page context = what the sidebar should show. On /jobs/view/<id> we
+  // surface a "Current Vacancy" section with a manual Save button; on
+  // list pages we surface Autopilot; elsewhere both are hidden.
+  function getPageMode() {
+    if (isJobViewPage()) return "view";
+    if (isJobListPage()) return "list";
+    return "other";
+  }
+
+  function currentJobInfo() {
+    const jobId = jobIdFromUrl(location.href);
+    if (!jobId) return null;
+    const panel = getDetailPanel();
+    const titleEl = panel.querySelector(
+      '.job-details-jobs-unified-top-card__job-title, ' +
+      '.jobs-unified-top-card__job-title, h1.t-24, h2.t-24'
+    );
+    let title = titleEl && titleEl.innerText ? titleEl.innerText.trim() : "";
+    if (!title) {
+      const parts = (document.title || "").split(" | ").map((p) => p.trim());
+      title = (parts[0] || "Unknown role").replace(/^\(\d+\)\s*/, "");
+    }
+    return { jobId, title, saved: savedIds.has(jobId) };
+  }
+
+  function publishPageContext() {
+    sidebarState.pageMode    = getPageMode();
+    sidebarState.currentJob  = sidebarState.pageMode === "view" ? currentJobInfo() : null;
+    publishStateToSidebar();
+  }
+
+  function setSaveStatus(status) {
+    sidebarState.saveStatus = status;
     publishStateToSidebar();
   }
 
@@ -90,8 +134,11 @@
     if (!data || data.from !== "tally-sidebar") return;
     if (data.type === "sidebar.ready") {
       refreshDashboard();
+      publishPageContext();
     } else if (data.type === "autopilot.toggle") {
       runAutopilot();
+    } else if (data.type === "job.save") {
+      saveCurrentJob();
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
@@ -356,31 +403,55 @@
   async function saveCurrentJob() {
     const url = location.href;
     const jobId = jobIdFromUrl(url);
-    if (!jobId) { updateBtn("No job ID", "error"); return; }
+    if (!jobId) {
+      updateBtn("No job ID", "error");
+      setSaveStatus({ state: "error", label: "No job ID on this page", working: false });
+      return;
+    }
 
     // Skip if we already have it
     if (savedIds.has(jobId)) {
       updateBtn("Already saved", "exists");
+      setSaveStatus({ state: "exists", label: "In vault already", working: false });
+      publishPageContext();
       setTimeout(renderActionButton, 3000);
       return;
     }
 
     updateBtn("Extracting...", "working");
+    setSaveStatus({ state: "working", label: "Extracting…", working: true });
     const data = await extractJob(url, jobId);
     updateBtn("Saving...", "working");
+    setSaveStatus({ state: "working", label: "Saving…", working: true });
     const r = await apiPost("/api/parse", data);
-    if (!r.ok) { updateBtn("API offline", "error"); setTimeout(renderActionButton, 4000); return; }
+    if (!r.ok) {
+      updateBtn("API offline", "error");
+      setSaveStatus({ state: "error", label: "API offline", working: false });
+      setTimeout(renderActionButton, 4000);
+      return;
+    }
     const res = r.data;
     if (res.status === "saved") {
       savedIds.add(jobId);
       updateBtn(`Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`, "success");
+      setSaveStatus({
+        state: "saved",
+        label: `Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`,
+        working: false,
+      });
+      publishPageContext();
+      refreshDashboard();
     } else if (res.status === "exists") {
       savedIds.add(jobId);
       updateBtn("Already saved", "exists");
+      setSaveStatus({ state: "exists", label: "In vault already", working: false });
+      publishPageContext();
     } else if (res.error === "daily_cap") {
       updateBtn("Daily cap reached", "error");
+      setSaveStatus({ state: "error", label: "Daily cap reached", working: false });
     } else {
       updateBtn("Error: " + (res.error || "unknown"), "error");
+      setSaveStatus({ state: "error", label: "Error: " + (res.error || "unknown"), working: false });
     }
     setTimeout(renderActionButton, 4000);
   }
@@ -616,6 +687,13 @@
     }
 
     if (isJobViewPage()) {
+      // Sidebar owns Save on view pages. Hide the floating button to
+      // avoid duplicate UI. Fallback: if sidebar failed to inject, still
+      // render the floating button so Save stays reachable.
+      if (document.getElementById(SIDEBAR_CONTAINER_ID)) {
+        btn.style.display = "none";
+        return;
+      }
       const jid = jobIdFromUrl(location.href);
       const already = jid && savedIds.has(jid);
       btn.className = `jm-action-btn ${already ? "jm-exists" : "jm-ready"}`;
@@ -664,14 +742,20 @@
     observer._timer = setTimeout(() => {
       markSavedCards();
       renderActionButton();
-      if (/\/jobs\//.test(location.href)) injectSidebar();
+      if (/\/jobs\//.test(location.href)) {
+        injectSidebar();
+        publishPageContext();
+      }
     }, 1200);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
   setTimeout(() => {
     onPageUpdate();
-    if (/\/jobs\//.test(location.href)) injectSidebar();
+    if (/\/jobs\//.test(location.href)) {
+      injectSidebar();
+      publishPageContext();
+    }
   }, 2000);
   // Re-sync periodically in case the vault changes server-side
   setInterval(refreshSavedIds, 60000);

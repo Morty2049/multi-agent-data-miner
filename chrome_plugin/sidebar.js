@@ -1,11 +1,16 @@
 (() => {
-  const autopilotBtn = document.getElementById("tally-autopilot-btn");
-  const closeBtn     = document.getElementById("tally-close");
-  const statusDot    = document.getElementById("tally-status-dot");
-  const vacanciesEl  = document.getElementById("tally-vacancies");
-  const companiesEl  = document.getElementById("tally-companies");
-  const todayEl      = document.getElementById("tally-today");
-  const progressEl   = document.getElementById("tally-progress");
+  const autopilotBtn     = document.getElementById("tally-autopilot-btn");
+  const autopilotSection = document.getElementById("tally-autopilot-section");
+  const vacancySection   = document.getElementById("tally-vacancy-section");
+  const vacancyTitle     = document.getElementById("tally-vacancy-title");
+  const saveBtn          = document.getElementById("tally-save-btn");
+  const saveMsg          = document.getElementById("tally-save-msg");
+  const closeBtn         = document.getElementById("tally-close");
+  const statusDot        = document.getElementById("tally-status-dot");
+  const vacanciesEl      = document.getElementById("tally-vacancies");
+  const companiesEl      = document.getElementById("tally-companies");
+  const todayEl          = document.getElementById("tally-today");
+  const progressEl       = document.getElementById("tally-progress");
 
   function applyState(payload) {
     // API status dot
@@ -37,6 +42,50 @@
 
     // Progress text
     progressEl.textContent = payload.autopilotProgress || "";
+
+    // Page-aware sections: view page shows Save, list page shows Autopilot
+    const mode = payload.pageMode || "other";
+    if (mode === "view") {
+      vacancySection.classList.remove("tally-hidden");
+      autopilotSection.classList.add("tally-hidden");
+      const job = payload.currentJob;
+      vacancyTitle.textContent = (job && job.title) ? job.title : "Loading…";
+      applySaveButton(job, payload.saveStatus);
+    } else if (mode === "list") {
+      vacancySection.classList.add("tally-hidden");
+      autopilotSection.classList.remove("tally-hidden");
+    } else {
+      vacancySection.classList.add("tally-hidden");
+      autopilotSection.classList.add("tally-hidden");
+    }
+  }
+
+  function applySaveButton(job, status) {
+    saveBtn.classList.remove("tally-btn-running", "tally-btn-saved", "tally-btn-exists");
+    saveMsg.textContent = "";
+
+    if (job && job.saved) {
+      saveBtn.textContent = "In vault ✓";
+      saveBtn.disabled = true;
+      saveBtn.classList.add("tally-btn-exists");
+      if (status && status.state === "saved") saveMsg.textContent = status.label;
+      return;
+    }
+    if (status && status.working) {
+      saveBtn.textContent = status.label || "Saving…";
+      saveBtn.disabled = true;
+      saveBtn.classList.add("tally-btn-running");
+      return;
+    }
+    if (status && status.state === "error") {
+      saveBtn.textContent = "Save to vault";
+      saveBtn.disabled = false;
+      saveMsg.textContent = status.label || "Error";
+      return;
+    }
+    // idle
+    saveBtn.textContent = "Save to vault";
+    saveBtn.disabled = false;
   }
 
   // Listen for state pushes from the parent (content.js)
@@ -48,12 +97,15 @@
     }
   });
 
-  // Autopilot toggle
   autopilotBtn.addEventListener("click", () => {
     window.parent.postMessage({ from: "tally-sidebar", type: "autopilot.toggle" }, "*");
   });
 
-  // Close
+  saveBtn.addEventListener("click", () => {
+    if (saveBtn.disabled) return;
+    window.parent.postMessage({ from: "tally-sidebar", type: "job.save" }, "*");
+  });
+
   closeBtn.addEventListener("click", () => {
     window.parent.postMessage({ from: "tally-sidebar", type: "sidebar.close" }, "*");
   });
