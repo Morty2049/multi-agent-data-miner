@@ -820,12 +820,47 @@
     btn.style.display = "flex";
   }
 
+  // ── Auto-save on view ───────────────────────────────────────────
+  // When the user opens a vacancy (directly via /jobs/view/<id> or by
+  // clicking a card in the list, which updates ?currentJobId=<id> via
+  // pushState), the DOM is already populated with everything we need —
+  // save it without requiring an extra click. Skips if Autopilot is
+  // already running (no need to double-save) or if the vacancy is
+  // already in the vault. One-shot per job_id per tab.
+
+  let lastAutoSavedJobId = null;
+  let autoSaveTimer = null;
+  const AUTO_SAVE_DELAY_MS = 2500;  // leave DOM time to populate
+
+  function maybeAutoSaveCurrentView() {
+    if (autopilotRunning) return;
+    const jid = jobIdFromUrl(location.href);
+    if (!jid) return;
+    if (jid === lastAutoSavedJobId) return;
+    // Claim the job id even if it's already saved, so rapid re-fires
+    // of the observer don't re-enter this branch.
+    lastAutoSavedJobId = jid;
+    if (savedIds.has(jid)) return;
+
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      // Guard at firing time: user may have navigated away, autopilot
+      // may have started, or the job may have been saved in the meantime.
+      if (autopilotRunning) return;
+      const nowJid = jobIdFromUrl(location.href);
+      if (nowJid !== jid) return;
+      if (savedIds.has(jid)) return;
+      saveCurrentJob();
+    }, AUTO_SAVE_DELAY_MS);
+  }
+
   // ── init / observer ─────────────────────────────────────────────
 
   async function onPageUpdate() {
     await refreshSavedIds();
     markSavedCards();
     renderActionButton();
+    maybeAutoSaveCurrentView();
   }
 
   const observer = new MutationObserver(() => {
@@ -836,6 +871,7 @@
       if (/\/jobs\//.test(location.href)) {
         injectSidebar();
         publishPageContext();
+        maybeAutoSaveCurrentView();
       }
     }, 1200);
   });
