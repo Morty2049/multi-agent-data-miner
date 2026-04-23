@@ -38,7 +38,13 @@
     vacanciesEl.textContent = payload.totalVacancies != null ? payload.totalVacancies : "—";
     companiesEl.textContent = payload.totalCompanies != null ? payload.totalCompanies : "—";
     if (payload.parsedToday != null && payload.dailyCap != null) {
-      todayEl.textContent = payload.parsedToday + "/" + payload.dailyCap;
+      // daily_cap=null on the server becomes the _UNLIMITED sentinel
+      // (1e9) in the dashboard response. Show it as ∞ so the number
+      // doesn't dwarf the "TODAY" stat card.
+      const isUnlimited = payload.dailyCap >= 1e8;
+      todayEl.textContent = isUnlimited
+        ? payload.parsedToday + " / ∞"
+        : payload.parsedToday + " / " + payload.dailyCap;
     } else if (payload.parsedToday != null) {
       todayEl.textContent = payload.parsedToday;
     } else {
@@ -57,14 +63,12 @@
     // Progress text
     progressEl.textContent = payload.autopilotProgress || "";
 
-    // Page-aware sections. Settings panel takes over when open,
-    // otherwise view pages show Save and list pages show Autopilot.
+    // Page-aware sections. View pages show Save, list pages show
+    // Autopilot; settings panel (if open) appears beneath them — they
+    // all stay accessible at the same time.
     const mode = payload.pageMode || "other";
     lastPageMode = mode;
-    if (settingsOpen) {
-      vacancySection.classList.add("tally-hidden");
-      autopilotSection.classList.add("tally-hidden");
-    } else if (mode === "view") {
+    if (mode === "view") {
       vacancySection.classList.remove("tally-hidden");
       autopilotSection.classList.add("tally-hidden");
       const job = payload.currentJob;
@@ -115,15 +119,11 @@
     gearBtn.classList.toggle("tally-active", open);
     gearBtn.setAttribute("aria-expanded", String(open));
     if (open) {
-      vacancySection.classList.add("tally-hidden");
-      autopilotSection.classList.add("tally-hidden");
       settingsMsg.textContent = "";
       window.parent.postMessage({ from: "tally-sidebar", type: "settings.open" }, "*");
-    } else {
-      // Restore whichever section matches the page we were on.
-      if (lastPageMode === "view") vacancySection.classList.remove("tally-hidden");
-      else if (lastPageMode === "list") autopilotSection.classList.remove("tally-hidden");
     }
+    // Vacancy / Autopilot sections are page-context driven (see
+    // applyState) and stay visible regardless of settings panel state.
   }
 
   function applySaveButton(job, status) {
