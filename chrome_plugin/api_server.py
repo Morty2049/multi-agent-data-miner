@@ -117,10 +117,17 @@ def _scan_vacancies() -> list[dict]:
                 m = _JOB_ID_RE.search(p.name)
                 if m:
                     job_id = m.group(1)
+            # Company is stored as "[[Name]]" wiki-link in frontmatter;
+            # strip the brackets so event-log / Applications panel can
+            # use it as a plain key.
+            raw_company = str(fm.get("company", "")).strip()
+            company = raw_company.strip("[]").strip('"').strip() or ""
             result.append({
                 "file": p.stem,
                 "job_id": job_id,
                 "date": str(fm.get("date", "")),
+                "company": company,
+                "title": str(fm.get("title", "")),
             })
     _cache["vacancies"] = result
     return result
@@ -314,6 +321,18 @@ _Parsed via Chrome extension._
         comp_path.write_text(comp_text, encoding="utf-8")
 
     config.register_parse()
+    # Seed the application timeline with the initial "saved" event.
+    # Subsequent transitions (applied, screening, …) land here too via
+    # /api/events. Latest non-note event's kind is the vacancy's status.
+    try:
+        config.append_event({
+            "job_id": job_id,
+            "kind":   "saved",
+            "note":   "Saved via Chrome extension",
+            "company": company,
+        })
+    except ValueError:
+        pass  # never block a save on a bad event payload
     _cache.clear()  # dashboard + parsed-ids must see the new file
 
     return {
@@ -323,3 +342,138 @@ _Parsed via Chrome extension._
         "parsed_today": config.parsed_today(),
         "remaining_today": config.remaining_today(),
     }
+
+
+# ── /api/events (application timeline + status transitions) ──────────
+
+
+class EventRequest(BaseModel):
+    job_id: str
+    kind: str
+    note: str | None = None
+    at: str | None = None
+    company: str | None = None
+
+
+@app.post("/api/events")
+def append_event(event: EventRequest):
+    """Append one timeline event. 400-style error-dict on validation fail."""
+    try:
+        return config.append_event(event.model_dump(exclude_none=True))
+    except ValueError as e:
+        return {"error": "invalid_event", "message": str(e)}
+
+
+def _event_matches(event: dict, job_id: str | None, company: str | None) -> bool:
+    if job_id is not None and event.get("job_id") != job_id:
+        return False
+    if company is not None and event.get("company") != company:
+        return False
+    return True
+
+
+@app.get("/api/events")
+def list_events(job_id: str | None = None, company: str | None = None):
+    """Events filtered by job_id and/or company. No filter returns all.
+    `company` matches the stamped-at-save-time company name (case sensitive).
+    """
+    all_events = config.load_events()
+    filtered = [e for e in all_events if _event_matches(e, job_id, company)]
+    return {"events": filtered, "count": len(filtered)}
+
+
+@app.get("/api/applications")
+def list_applications():
+    """Latest status per job_id plus per-status counts, for the
+    Applications panel. Does not look inside vault files — relies solely
+    on what's in events.jsonl, so a vacancy missing a "saved" event
+    will simply not appear here. In practice every vacancy saved via
+    /api/parse gets its "saved" event auto-stamped; the bulk-migration
+    endpoint covers the pre-events backlog."""
+    all_events = config.load_events()
+    # Latest status per job_id, plus all events per job_id for metadata
+    latest_by_job: dict[str, dict] = {}
+    all_by_job: dict[str, list[dict]] = {}
+    for ev in all_events:
+        jid = ev.get("job_id")
+        if not jid:
+            continue
+        all_by_job.setdefault(jid, []).append(ev)
+        if ev.get("kind") in config.STATUS_KINDS:
+            latest_by_job[jid] = ev
+
+    counts: dict[str, int] = {k: 0 for k in config.STATUS_KINDS}
+    items: list[dict] = []
+    for jid, latest in latest_by_job.items():
+        kind = latest["kind"]
+        counts[kind] += 1
+        # Company/title from the earliest saved event if present
+        company = None
+        for e in all_by_job.get(jid, []):
+            if e.get("company"):
+                company = e["company"]
+                break
+        items.append({
+            "job_id":     jid,
+            "status":     kind,
+            "last_at":    latest.get("at"),
+            "last_note":  latest.get("note"),
+            "company":    company,
+            "event_count": len(all_by_job.get(jid, [])),
+        })
+    # Stable ordering: most recently touched first
+    items.sort(key=lambda it: it.get("last_at") or "", reverse=True)
+    return {"counts": counts, "items": items, "total": len(items)}
+
+
+@app.post("/api/events/migrate-existing")
+def migrate_existing_vacancies():
+    """One-shot: seed a "saved" event for every vacancy file in the vault
+    that doesn't already have any event. Idempotent — safe to re-run.
+    Uses the vacancy's `date` frontmatter field as the timestamp, falling
+    back to the file's mtime. Intended for the first Phase-A rollout
+    where 500+ pre-existing vacancies were saved before the event log
+    existed."""
+    existing_job_ids = {e.get("job_id") for e in config.load_events()}
+    seeded = 0
+    skipped = 0
+    errors: list[str] = []
+    for vac in _scan_vacancies():
+        jid = vac.get("job_id")
+        if not jid or jid in existing_job_ids:
+            skipped += 1
+            continue
+        date_str = vac.get("date") or ""
+        # Frontmatter date is YYYY-MM-DD; pin the time at noon UTC for
+        # a reasonable sort key. Fall back to file mtime if date is bad.
+        at_iso = None
+        if date_str:
+            try:
+                dt = datetime.datetime.strptime(date_str, "%Y-%m-%d").replace(
+                    hour=12, tzinfo=datetime.timezone.utc
+                )
+                at_iso = dt.isoformat()
+            except ValueError:
+                pass
+        if at_iso is None:
+            vac_path = VACANCIES_DIR / ((vac.get("file") or "") + ".md")
+            if vac_path.exists():
+                at_iso = datetime.datetime.fromtimestamp(
+                    vac_path.stat().st_mtime, tz=datetime.timezone.utc
+                ).isoformat()
+            else:
+                at_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        company = vac.get("company") or None
+        try:
+            config.append_event({
+                "job_id": jid,
+                "kind":   "saved",
+                "at":     at_iso,
+                "note":   "Backfilled from vault on migration",
+                **({"company": company} if company else {}),
+            })
+            seeded += 1
+            existing_job_ids.add(jid)
+        except ValueError as e:
+            errors.append(f"{jid}: {e}")
+    return {"seeded": seeded, "skipped": skipped, "errors": errors}

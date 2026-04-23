@@ -73,6 +73,7 @@ DATA_DIR = _resolved_dir("JOB_MINER_DATA_DIR", REPO_ROOT / "data")
 VAULT_DIR = _resolved_dir("JOB_MINER_VAULT_DIR", REPO_ROOT / "obsidian_vault")
 RATE_LIMIT_FILE = DATA_DIR / "rate_limit.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+EVENTS_FILE = DATA_DIR / "events.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -279,3 +280,100 @@ def effective_cap() -> int:
     """Daily cap that /api/parse enforces right now. None in settings = no cap."""
     cap = load_settings().get("daily_cap")
     return _UNLIMITED if cap is None else cap
+
+
+# ---------------------------------------------------------------------------
+# Application event log (per-vacancy timeline: saved → applied → … → offer)
+# ---------------------------------------------------------------------------
+#
+# Events live in `data/events.jsonl` (gitignored alongside rate_limit.json
+# and settings.json). One JSON object per line, append-only. Each event
+# records a status transition or a free-form comment ("note"). The latest
+# non-note event's `kind` is the vacancy's current status.
+#
+# Schema:
+#   {"job_id": "4398…", "kind": "interview", "at": "2026-11-07T14:00…",
+#    "note": "Round 2 · hiring manager + design lead"}
+#
+# The JSONL format is deliberately boring — easy to tail, easy to shard
+# under a future multiplayer backend, easy to migrate to a real DB if
+# the volume ever warrants one.
+
+EVENT_KINDS = (
+    "saved", "applied", "screening", "interview",
+    "test_task", "offer", "rejected", "ghosted", "note",
+)
+# Subset whose `kind` counts as a status change. "note" is free-form
+# commentary that stays visible in the timeline but never mutates status.
+STATUS_KINDS = tuple(k for k in EVENT_KINDS if k != "note")
+
+
+def _validate_event(event: dict) -> None:
+    """Raise ValueError on invalid event payload."""
+    if not isinstance(event, dict):
+        raise ValueError("event must be an object")
+    if not event.get("job_id") or not isinstance(event["job_id"], str):
+        raise ValueError("job_id (string) is required")
+    if event.get("kind") not in EVENT_KINDS:
+        raise ValueError(f"kind must be one of {EVENT_KINDS}, got {event.get('kind')!r}")
+    at = event.get("at")
+    if at is not None and not isinstance(at, str):
+        raise ValueError("at must be an ISO-8601 string if present")
+    note = event.get("note")
+    if note is not None and not isinstance(note, str):
+        raise ValueError("note must be a string if present")
+
+
+def append_event(event: dict) -> dict:
+    """Validate, stamp `at` if missing, append one line to events.jsonl,
+    return the (normalised) event. Safe across concurrent writers on the
+    same host because of append-mode + newline-terminated JSONL."""
+    _validate_event(event)
+    normalised = {
+        "job_id": event["job_id"],
+        "kind":   event["kind"],
+        "at":     event.get("at") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    if event.get("note"):
+        normalised["note"] = event["note"]
+    if event.get("company"):
+        normalised["company"] = event["company"]
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with EVENTS_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(normalised, ensure_ascii=False) + "\n")
+    return normalised
+
+
+def load_events() -> list[dict]:
+    """All events in file order. Empty list if the file is missing or
+    unreadable. Malformed lines are skipped, not fatal."""
+    if not EVENTS_FILE.exists():
+        return []
+    try:
+        raw = EVENTS_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out: list[dict] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    return out
+
+
+def latest_status(events: list[dict], job_id: str) -> str:
+    """Latest non-note kind for the given job_id. Defaults to "saved"
+    if the job has only notes or no events at all."""
+    for e in reversed(events):
+        if e.get("job_id") != job_id:
+            continue
+        kind = e.get("kind")
+        if kind in STATUS_KINDS:
+            return kind
+    return "saved"

@@ -55,6 +55,7 @@ def isolated_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", data)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", data / "rate_limit.json")
     monkeypatch.setattr(config, "SETTINGS_FILE", data / "settings.json")
+    monkeypatch.setattr(config, "EVENTS_FILE", data / "events.jsonl")
 
     monkeypatch.setattr(srv, "VAULT", vault)
     monkeypatch.setattr(srv, "DATA", data)

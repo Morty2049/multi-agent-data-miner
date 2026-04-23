@@ -132,6 +132,67 @@ def test_can_parse_more_honours_settings_cap(tmp_path, monkeypatch):
     assert not config.can_parse_more()
 
 
+def test_append_event_stamps_at_and_appends_jsonl(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "EVENTS_FILE", tmp_path / "events.jsonl")
+    ev = config.append_event({"job_id": "42", "kind": "applied", "note": "via Easy Apply"})
+    assert ev["at"]  # auto-stamped
+    assert ev["kind"] == "applied"
+    # File now contains exactly one JSON line
+    lines = (tmp_path / "events.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+
+
+def test_append_event_rejects_invalid_kind(tmp_path, monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "EVENTS_FILE", tmp_path / "events.jsonl")
+    with pytest.raises(ValueError, match="kind"):
+        config.append_event({"job_id": "42", "kind": "hired"})
+
+
+def test_append_event_rejects_missing_job_id(tmp_path, monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "EVENTS_FILE", tmp_path / "events.jsonl")
+    with pytest.raises(ValueError, match="job_id"):
+        config.append_event({"kind": "applied"})
+
+
+def test_load_events_returns_empty_when_file_missing(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "EVENTS_FILE", tmp_path / "no-such.jsonl")
+    assert config.load_events() == []
+
+
+def test_load_events_skips_malformed_lines(tmp_path, monkeypatch):
+    import config
+    f = tmp_path / "events.jsonl"
+    f.write_text('{"job_id":"1","kind":"saved","at":"x"}\nnot-json\n{"job_id":"2","kind":"applied","at":"y"}\n')
+    monkeypatch.setattr(config, "EVENTS_FILE", f)
+    events = config.load_events()
+    assert [e["job_id"] for e in events] == ["1", "2"]
+
+
+def test_latest_status_ignores_notes_and_other_jobs(tmp_path, monkeypatch):
+    import config
+    events = [
+        {"job_id": "A", "kind": "saved",    "at": "1"},
+        {"job_id": "A", "kind": "applied",  "at": "2"},
+        {"job_id": "B", "kind": "rejected", "at": "3"},
+        {"job_id": "A", "kind": "note",     "at": "4", "note": "thought about it"},
+    ]
+    # Note doesn't move status; "applied" is latest real status for A
+    assert config.latest_status(events, "A") == "applied"
+    # B has its own chain
+    assert config.latest_status(events, "B") == "rejected"
+    # Unknown job defaults to "saved"
+    assert config.latest_status(events, "C") == "saved"
+
+
 def test_env_overrides_vault_and_data_dirs(tmp_path, monkeypatch):
     vault = tmp_path / "vault"
     data = tmp_path / "data"
