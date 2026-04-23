@@ -13,6 +13,15 @@
   const todayEl          = document.getElementById("tally-today");
   const progressEl       = document.getElementById("tally-progress");
 
+  // Timeline refs
+  const timelineSection  = document.getElementById("tally-timeline-section");
+  const timelineList     = document.getElementById("tally-timeline-list");
+  const timelineCount    = document.getElementById("tally-timeline-count");
+  const eventKindSelect  = document.getElementById("tally-event-kind");
+  const eventNoteInput   = document.getElementById("tally-event-note");
+  const eventAddBtn      = document.getElementById("tally-event-add");
+  const eventMsg         = document.getElementById("tally-event-msg");
+
   // Settings panel refs
   const settingsSection  = document.getElementById("tally-settings-section");
   const modeBadge        = document.getElementById("tally-mode-badge");
@@ -71,15 +80,19 @@
     if (mode === "view") {
       vacancySection.classList.remove("tally-hidden");
       autopilotSection.classList.add("tally-hidden");
+      timelineSection.classList.remove("tally-hidden");
       const job = payload.currentJob;
       vacancyTitle.textContent = (job && job.title) ? job.title : "Loading…";
       applySaveButton(job, payload.saveStatus);
+      applyTimeline(payload.timeline || []);
     } else if (mode === "list") {
       vacancySection.classList.add("tally-hidden");
       autopilotSection.classList.remove("tally-hidden");
+      timelineSection.classList.add("tally-hidden");
     } else {
       vacancySection.classList.add("tally-hidden");
       autopilotSection.classList.add("tally-hidden");
+      timelineSection.classList.add("tally-hidden");
     }
 
     // Settings form content — populate whenever content.js pushes
@@ -126,6 +139,47 @@
     // applyState) and stay visible regardless of settings panel state.
   }
 
+  function formatEventAt(isoString) {
+    if (!isoString) return "";
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return "";
+    // Month short + day + HH:mm — compact and unambiguous in context.
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const mm = months[d.getMonth()];
+    const dd = d.getDate();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${mm} ${dd}, ${hh}:${mi}`;
+  }
+
+  function applyTimeline(events) {
+    timelineCount.textContent = String(events.length);
+    // Oldest first (chronological) so the latest event sits at the bottom
+    // closest to the "Add event" form. Matches the design mockup.
+    const sorted = events.slice().sort((a, b) => {
+      const at = a.at || ""; const bt = b.at || "";
+      return at < bt ? -1 : at > bt ? 1 : 0;
+    });
+    timelineList.innerHTML = "";
+    for (const ev of sorted) {
+      const li = document.createElement("li");
+      li.className = "tally-event";
+      li.dataset.kind = ev.kind || "note";
+      const dot  = document.createElement("span"); dot.className = "tally-event-dot";
+      const body = document.createElement("div"); body.className = "tally-event-body";
+      const kind = document.createElement("div"); kind.className = "tally-event-kind";
+      kind.textContent = (ev.kind || "note").replace("_", " ");
+      const note = document.createElement("div"); note.className = "tally-event-note";
+      note.textContent = ev.note || "";
+      body.appendChild(kind);
+      if (ev.note) body.appendChild(note);
+      const at = document.createElement("span"); at.className = "tally-event-at";
+      at.textContent = formatEventAt(ev.at);
+      li.appendChild(dot); li.appendChild(body); li.appendChild(at);
+      timelineList.appendChild(li);
+    }
+  }
+
   function applySaveButton(job, status) {
     saveBtn.classList.remove("tally-btn-running", "tally-btn-saved", "tally-btn-exists");
     saveMsg.textContent = "";
@@ -154,7 +208,7 @@
     saveBtn.disabled = false;
   }
 
-  // Listen for state + settings.result pushes from the parent (content.js)
+  // Listen for state + result pushes from the parent (content.js)
   window.addEventListener("message", (event) => {
     const data = event.data;
     if (!data || data.to !== "tally-sidebar") return;
@@ -163,6 +217,16 @@
     } else if (data.type === "settings.result") {
       const p = data.payload || {};
       settingsMsg.textContent = p.ok ? "Saved ✓" : (p.error || "Error");
+    } else if (data.type === "event.result") {
+      const p = data.payload || {};
+      eventAddBtn.disabled = false;
+      if (p.ok) {
+        eventMsg.textContent = "Added ✓";
+        eventNoteInput.value = "";
+        eventKindSelect.value = "note";
+      } else {
+        eventMsg.textContent = p.error || "Error";
+      }
     }
   });
 
@@ -173,6 +237,18 @@
   saveBtn.addEventListener("click", () => {
     if (saveBtn.disabled) return;
     window.parent.postMessage({ from: "tally-sidebar", type: "job.save" }, "*");
+  });
+
+  eventAddBtn.addEventListener("click", () => {
+    const kind = eventKindSelect.value;
+    const note = eventNoteInput.value.trim();
+    if (!kind) return;
+    eventMsg.textContent = `Adding ${kind}…`;
+    eventAddBtn.disabled = true;
+    window.parent.postMessage(
+      { from: "tally-sidebar", type: "event.add", payload: { kind, note } },
+      "*"
+    );
   });
 
   closeBtn.addEventListener("click", () => {

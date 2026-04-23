@@ -27,6 +27,10 @@
     // sidebar.ready and refreshed after each save/preset apply so the
     // settings panel always renders the latest server truth.
     settings:          null,
+    // Events for the vacancy currently open at location.href (empty
+    // list on non-view pages). Refetched from /api/events whenever the
+    // user opens a different vacancy or adds / removes a timeline event.
+    timeline:          [],
   };
 
   function publishStateToSidebar() {
@@ -84,6 +88,23 @@
   function publishPageContext() {
     sidebarState.pageMode    = getPageMode();
     sidebarState.currentJob  = sidebarState.pageMode === "view" ? currentJobInfo() : null;
+    if (sidebarState.pageMode !== "view") sidebarState.timeline = [];
+    publishStateToSidebar();
+    // View pages trigger a timeline refresh so the sidebar's Application
+    // timeline section reflects the currently-open vacancy. Fire-and-forget
+    // — refreshTimeline pushes state again when it completes.
+    if (sidebarState.pageMode === "view") {
+      const jid = sidebarState.currentJob && sidebarState.currentJob.jobId;
+      if (jid) refreshTimeline(jid);
+    }
+  }
+
+  async function refreshTimeline(jobId) {
+    const r = await apiGet(`/api/events?job_id=${encodeURIComponent(jobId)}`);
+    // Guard against the user having navigated away while the request was in flight
+    const current = sidebarState.currentJob;
+    if (!current || current.jobId !== jobId) return;
+    sidebarState.timeline = (r.ok && r.data && Array.isArray(r.data.events)) ? r.data.events : [];
     publishStateToSidebar();
   }
 
@@ -135,6 +156,37 @@
     publishStateToSidebar();
     refreshDashboard();
     postSettingsResult(true);
+  }
+
+  function postEventResult(ok, error) {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "event.result", payload: { ok, error } },
+      "*"
+    );
+  }
+
+  async function addEventViaApi(payload) {
+    // Timeline events are per-vacancy — require a view-page context.
+    const job = sidebarState.currentJob;
+    if (!job || !job.jobId) {
+      postEventResult(false, "Open a vacancy first");
+      return;
+    }
+    const body = {
+      job_id: job.jobId,
+      kind:   (payload && payload.kind) || "note",
+    };
+    if (payload && payload.note) body.note = payload.note;
+    const r = await apiPost("/api/events", body);
+    if (!r.ok) { postEventResult(false, "API offline"); return; }
+    const res = r.data || {};
+    if (res.error) { postEventResult(false, res.message || res.error); return; }
+    // Refresh timeline + dashboard so counts stay in sync
+    await refreshTimeline(job.jobId);
+    refreshDashboard();
+    postEventResult(true);
   }
 
   function injectSidebar() {
@@ -202,6 +254,8 @@
     } else if (data.type === "settings.preset") {
       const name = data.payload && data.payload.name;
       if (name) applyPresetViaApi(name);
+    } else if (data.type === "event.add") {
+      addEventViaApi(data.payload || {});
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
