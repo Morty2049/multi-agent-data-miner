@@ -27,6 +27,10 @@
     // sidebar.ready and refreshed after each save/preset apply so the
     // settings panel always renders the latest server truth.
     settings:          null,
+    // Events for the vacancy currently open at location.href (empty
+    // list on non-view pages). Refetched from /api/events whenever the
+    // user opens a different vacancy or adds / removes a timeline event.
+    timeline:          [],
   };
 
   function publishStateToSidebar() {
@@ -84,6 +88,23 @@
   function publishPageContext() {
     sidebarState.pageMode    = getPageMode();
     sidebarState.currentJob  = sidebarState.pageMode === "view" ? currentJobInfo() : null;
+    if (sidebarState.pageMode !== "view") sidebarState.timeline = [];
+    publishStateToSidebar();
+    // View pages trigger a timeline refresh so the sidebar's Application
+    // timeline section reflects the currently-open vacancy. Fire-and-forget
+    // — refreshTimeline pushes state again when it completes.
+    if (sidebarState.pageMode === "view") {
+      const jid = sidebarState.currentJob && sidebarState.currentJob.jobId;
+      if (jid) refreshTimeline(jid);
+    }
+  }
+
+  async function refreshTimeline(jobId) {
+    const r = await apiGet(`/api/events?job_id=${encodeURIComponent(jobId)}`);
+    // Guard against the user having navigated away while the request was in flight
+    const current = sidebarState.currentJob;
+    if (!current || current.jobId !== jobId) return;
+    sidebarState.timeline = (r.ok && r.data && Array.isArray(r.data.events)) ? r.data.events : [];
     publishStateToSidebar();
   }
 
@@ -135,6 +156,37 @@
     publishStateToSidebar();
     refreshDashboard();
     postSettingsResult(true);
+  }
+
+  function postEventResult(ok, error) {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "event.result", payload: { ok, error } },
+      "*"
+    );
+  }
+
+  async function addEventViaApi(payload) {
+    // Timeline events are per-vacancy — require a view-page context.
+    const job = sidebarState.currentJob;
+    if (!job || !job.jobId) {
+      postEventResult(false, "Open a vacancy first");
+      return;
+    }
+    const body = {
+      job_id: job.jobId,
+      kind:   (payload && payload.kind) || "note",
+    };
+    if (payload && payload.note) body.note = payload.note;
+    const r = await apiPost("/api/events", body);
+    if (!r.ok) { postEventResult(false, "API offline"); return; }
+    const res = r.data || {};
+    if (res.error) { postEventResult(false, res.message || res.error); return; }
+    // Refresh timeline + dashboard so counts stay in sync
+    await refreshTimeline(job.jobId);
+    refreshDashboard();
+    postEventResult(true);
   }
 
   function injectSidebar() {
@@ -202,6 +254,8 @@
     } else if (data.type === "settings.preset") {
       const name = data.payload && data.payload.name;
       if (name) applyPresetViaApi(name);
+    } else if (data.type === "event.add") {
+      addEventViaApi(data.payload || {});
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
@@ -820,12 +874,73 @@
     btn.style.display = "flex";
   }
 
+  // ── Auto-save on view ───────────────────────────────────────────
+  // When the user opens a vacancy (directly via /jobs/view/<id> or by
+  // clicking a card in the list, which updates ?currentJobId=<id> via
+  // pushState), the DOM is already populated with everything we need —
+  // save it without requiring an extra click. Skips if Autopilot is
+  // already running (no need to double-save) or if the vacancy is
+  // already in the vault. One-shot per job_id per tab.
+  //
+  // Timing: rather than a fixed setTimeout (original implementation used
+  // 2.5s as a heuristic "enough time for LinkedIn to lazy-load the JD"),
+  // we POLL the DOM every 400ms up to a 6s cap and save as soon as the
+  // description block is present with substantial text. Snappy on fast
+  // networks, patient on slow ones, and the sidebar sees a visible
+  // "Auto-saving…" status the whole time so the user isn't staring at
+  // silence wondering what's going on.
+
+  let lastAutoSavedJobId = null;
+  let autoSaveSeq = 0;  // cancels stale polling loops when the user scrubs through jobs
+  const AUTO_SAVE_POLL_MS = 400;
+  const AUTO_SAVE_MAX_WAIT_MS = 6000;
+  const AUTO_SAVE_MIN_DESC_LEN = 200;
+
+  function isJobDomReady() {
+    const panel = getDetailPanel();
+    const desc = getJobDescription(panel);
+    if (!desc) return false;
+    return (desc.innerText || "").trim().length >= AUTO_SAVE_MIN_DESC_LEN;
+  }
+
+  async function maybeAutoSaveCurrentView() {
+    if (autopilotRunning) return;
+    const jid = jobIdFromUrl(location.href);
+    if (!jid) return;
+    if (jid === lastAutoSavedJobId) return;
+    // Claim the job id even if it's already saved, so rapid re-fires
+    // of the observer don't re-enter this branch.
+    lastAutoSavedJobId = jid;
+    if (savedIds.has(jid)) return;
+
+    const mySeq = ++autoSaveSeq;
+    // Tell the sidebar immediately — don't leave the user in silence.
+    setSaveStatus({ state: "working", label: "Auto-saving…", working: true });
+
+    const start = Date.now();
+    while (Date.now() - start < AUTO_SAVE_MAX_WAIT_MS) {
+      if (mySeq !== autoSaveSeq) return;            // newer view preempted us
+      if (autopilotRunning) return;                  // autopilot took over
+      if (jobIdFromUrl(location.href) !== jid) return;  // user navigated away
+      if (savedIds.has(jid)) return;                 // already saved
+      if (isJobDomReady()) break;
+      await sleep(AUTO_SAVE_POLL_MS);
+    }
+    // Final guards before we commit to the save
+    if (mySeq !== autoSaveSeq) return;
+    if (autopilotRunning) return;
+    if (jobIdFromUrl(location.href) !== jid) return;
+    if (savedIds.has(jid)) return;
+    saveCurrentJob();  // takes it from here — publishes Extracting → Saving → Saved
+  }
+
   // ── init / observer ─────────────────────────────────────────────
 
   async function onPageUpdate() {
     await refreshSavedIds();
     markSavedCards();
     renderActionButton();
+    maybeAutoSaveCurrentView();
   }
 
   const observer = new MutationObserver(() => {
@@ -836,6 +951,7 @@
       if (/\/jobs\//.test(location.href)) {
         injectSidebar();
         publishPageContext();
+        maybeAutoSaveCurrentView();
       }
     }, 1200);
   });

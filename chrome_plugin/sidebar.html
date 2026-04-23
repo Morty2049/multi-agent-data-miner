@@ -37,6 +37,31 @@
     <p id="tally-save-msg" class="tally-progress-text"></p>
   </section>
 
+  <section id="tally-timeline-section" class="tally-timeline tally-hidden">
+    <div class="tally-timeline-head">
+      <span class="tally-settings-label">Application timeline</span>
+      <span id="tally-timeline-count" class="tally-mode-badge">0</span>
+    </div>
+    <ul id="tally-timeline-list" class="tally-timeline-list"></ul>
+    <div class="tally-add-event">
+      <div class="tally-add-event-row">
+        <select id="tally-event-kind" class="tally-select">
+          <option value="note">Note</option>
+          <option value="applied">Applied</option>
+          <option value="screening">Screening</option>
+          <option value="interview">Interview</option>
+          <option value="test_task">Test task</option>
+          <option value="offer">Offer</option>
+          <option value="rejected">Rejected</option>
+          <option value="ghosted">Ghosted</option>
+        </select>
+        <button id="tally-event-add" class="tally-secondary-btn">Add</button>
+      </div>
+      <input type="text" id="tally-event-note" class="tally-note-input" placeholder="Note (optional)…" />
+      <p id="tally-event-msg" class="tally-progress-text"></p>
+    </div>
+  </section>
+
   <section id="tally-autopilot-section" class="tally-autopilot">
     <button id="tally-autopilot-btn" class="tally-primary-btn">Autopilot</button>
     <p id="tally-progress" class="tally-progress-text"></p>
