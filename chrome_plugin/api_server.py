@@ -133,12 +133,17 @@ def _scan_vacancies() -> list[dict]:
             # use it as a plain key.
             raw_company = str(fm.get("company", "")).strip()
             company = raw_company.strip("[]").strip('"').strip() or ""
+            # Title isn't in the frontmatter — recover it from the filename
+            # stem "<Company>_-_<Title>_(<job_id>)" so Company History can
+            # show a readable "Senior Product Designer" next to each row.
+            title_match = re.match(r"^(.+?)_-_(.+?)_\(\d+\)$", p.stem)
+            title = title_match.group(2).replace("_", " ").strip() if title_match else ""
             result.append({
                 "file": p.stem,
                 "job_id": job_id,
                 "date": str(fm.get("date", "")),
                 "company": company,
-                "title": str(fm.get("title", "")),
+                "title": title,
             })
     _cache["vacancies"] = result
     return result
@@ -440,6 +445,55 @@ def list_applications():
     # Stable ordering: most recently touched first
     items.sort(key=lambda it: it.get("last_at") or "", reverse=True)
     return {"counts": counts, "items": items, "total": len(items)}
+
+
+@app.get("/api/company-history")
+def company_history(company: str):
+    """Aggregated per-vacancy summary of every touch at this company:
+    one row per job_id with its latest status, timestamp, and title.
+    Drives the sidebar's Company History section on /company/<slug>.
+    Company name is matched exactly against the `company` field
+    stamped onto events (either at save time or during migration)."""
+    if not company:
+        return {"company": "", "counts": {}, "items": [], "total": 0}
+    events = config.load_events()
+    relevant = [e for e in events if e.get("company") == company]
+    by_job: dict[str, list[dict]] = {}
+    for e in relevant:
+        jid = e.get("job_id")
+        if jid:
+            by_job.setdefault(jid, []).append(e)
+
+    # Title lookup from vault. One scan, not per-job, to stay cheap.
+    title_by_job = {
+        v["job_id"]: v.get("title") or v.get("file") or v["job_id"]
+        for v in _scan_vacancies()
+        if v.get("job_id")
+    }
+
+    items = []
+    for jid, evs in by_job.items():
+        latest = None
+        for ev in evs:
+            if ev.get("kind") not in config.STATUS_KINDS:
+                continue
+            if latest is None or (ev.get("at") or "") > (latest.get("at") or ""):
+                latest = ev
+        if latest is None:
+            # Only "note" events so far — fall back to the first event as anchor
+            latest = evs[0]
+        items.append({
+            "job_id":      jid,
+            "title":       title_by_job.get(jid, ""),
+            "status":      latest.get("kind") if latest.get("kind") in config.STATUS_KINDS else "saved",
+            "last_at":     latest.get("at"),
+            "event_count": len(evs),
+        })
+    items.sort(key=lambda it: it.get("last_at") or "", reverse=True)
+    counts: dict[str, int] = {k: 0 for k in config.STATUS_KINDS}
+    for it in items:
+        counts[it["status"]] = counts.get(it["status"], 0) + 1
+    return {"company": company, "counts": counts, "items": items, "total": len(items)}
 
 
 @app.post("/api/events/migrate-existing")

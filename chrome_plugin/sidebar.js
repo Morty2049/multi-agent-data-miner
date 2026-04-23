@@ -13,6 +13,13 @@
   const todayEl          = document.getElementById("tally-today");
   const progressEl       = document.getElementById("tally-progress");
 
+  // Company history refs
+  const companySection   = document.getElementById("tally-company-section");
+  const companyName      = document.getElementById("tally-company-name");
+  const companyList      = document.getElementById("tally-company-list");
+  const companyCount     = document.getElementById("tally-company-count");
+  const companyEmpty     = document.getElementById("tally-company-empty");
+
   // Timeline refs
   const timelineSection  = document.getElementById("tally-timeline-section");
   const timelineList     = document.getElementById("tally-timeline-list");
@@ -81,6 +88,7 @@
       vacancySection.classList.remove("tally-hidden");
       autopilotSection.classList.add("tally-hidden");
       timelineSection.classList.remove("tally-hidden");
+      companySection.classList.add("tally-hidden");
       const job = payload.currentJob;
       vacancyTitle.textContent = (job && job.title) ? job.title : "Loading…";
       applySaveButton(job, payload.saveStatus);
@@ -89,10 +97,20 @@
       vacancySection.classList.add("tally-hidden");
       autopilotSection.classList.remove("tally-hidden");
       timelineSection.classList.add("tally-hidden");
+      companySection.classList.add("tally-hidden");
+    } else if (mode === "company") {
+      vacancySection.classList.add("tally-hidden");
+      autopilotSection.classList.add("tally-hidden");
+      timelineSection.classList.add("tally-hidden");
+      companySection.classList.remove("tally-hidden");
+      const co = payload.currentCompany;
+      companyName.textContent = (co && co.name) ? co.name : "—";
+      applyCompanyHistory(payload.companyHistory || []);
     } else {
       vacancySection.classList.add("tally-hidden");
       autopilotSection.classList.add("tally-hidden");
       timelineSection.classList.add("tally-hidden");
+      companySection.classList.add("tally-hidden");
     }
 
     // Settings form content — populate whenever content.js pushes
@@ -177,6 +195,43 @@
       at.textContent = formatEventAt(ev.at);
       li.appendChild(dot); li.appendChild(body); li.appendChild(at);
       timelineList.appendChild(li);
+    }
+  }
+
+  function applyCompanyHistory(items) {
+    companyCount.textContent = String(items.length);
+    companyList.innerHTML = "";
+    if (items.length === 0) {
+      companyEmpty.classList.remove("tally-hidden");
+      return;
+    }
+    companyEmpty.classList.add("tally-hidden");
+    for (const it of items) {
+      const li = document.createElement("li");
+      li.className = "tally-company-row";
+      li.dataset.kind = it.status || "saved";
+
+      const dot = document.createElement("span");
+      dot.className = "tally-company-row-dot";
+
+      const titleCell = document.createElement("div");
+      titleCell.className = "tally-company-title";
+      const link = document.createElement("a");
+      link.href = `https://www.linkedin.com/jobs/view/${it.job_id}/`;
+      link.target = "_top";  // open in the parent LinkedIn tab, not inside the iframe
+      link.textContent = it.title || `Job ${it.job_id}`;
+      link.title = it.title || "";
+      titleCell.appendChild(link);
+
+      const pill = document.createElement("span");
+      pill.className = "tally-company-pill";
+      pill.dataset.kind = it.status || "saved";
+      pill.textContent = (it.status || "saved").replace("_", " ");
+
+      li.appendChild(dot);
+      li.appendChild(titleCell);
+      li.appendChild(pill);
+      companyList.appendChild(li);
     }
   }
 
