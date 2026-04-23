@@ -45,6 +45,10 @@ history.md
 # Claude Code harness — per-machine config, worktrees, session state
 .claude/
 
+# Local-only archive of retired code kept "just in case" (see
+# docs/adr/0001-retire-playwright-cli.md). Never committed.
+.legacy/
+
 # ── GSD baseline (auto-generated) ──
 .gsd
 .gsd-id
