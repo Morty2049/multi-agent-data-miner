@@ -827,12 +827,29 @@
   // save it without requiring an extra click. Skips if Autopilot is
   // already running (no need to double-save) or if the vacancy is
   // already in the vault. One-shot per job_id per tab.
+  //
+  // Timing: rather than a fixed setTimeout (original implementation used
+  // 2.5s as a heuristic "enough time for LinkedIn to lazy-load the JD"),
+  // we POLL the DOM every 400ms up to a 6s cap and save as soon as the
+  // description block is present with substantial text. Snappy on fast
+  // networks, patient on slow ones, and the sidebar sees a visible
+  // "Auto-saving…" status the whole time so the user isn't staring at
+  // silence wondering what's going on.
 
   let lastAutoSavedJobId = null;
-  let autoSaveTimer = null;
-  const AUTO_SAVE_DELAY_MS = 2500;  // leave DOM time to populate
+  let autoSaveSeq = 0;  // cancels stale polling loops when the user scrubs through jobs
+  const AUTO_SAVE_POLL_MS = 400;
+  const AUTO_SAVE_MAX_WAIT_MS = 6000;
+  const AUTO_SAVE_MIN_DESC_LEN = 200;
 
-  function maybeAutoSaveCurrentView() {
+  function isJobDomReady() {
+    const panel = getDetailPanel();
+    const desc = getJobDescription(panel);
+    if (!desc) return false;
+    return (desc.innerText || "").trim().length >= AUTO_SAVE_MIN_DESC_LEN;
+  }
+
+  async function maybeAutoSaveCurrentView() {
     if (autopilotRunning) return;
     const jid = jobIdFromUrl(location.href);
     if (!jid) return;
@@ -842,16 +859,25 @@
     lastAutoSavedJobId = jid;
     if (savedIds.has(jid)) return;
 
-    clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(() => {
-      // Guard at firing time: user may have navigated away, autopilot
-      // may have started, or the job may have been saved in the meantime.
-      if (autopilotRunning) return;
-      const nowJid = jobIdFromUrl(location.href);
-      if (nowJid !== jid) return;
-      if (savedIds.has(jid)) return;
-      saveCurrentJob();
-    }, AUTO_SAVE_DELAY_MS);
+    const mySeq = ++autoSaveSeq;
+    // Tell the sidebar immediately — don't leave the user in silence.
+    setSaveStatus({ state: "working", label: "Auto-saving…", working: true });
+
+    const start = Date.now();
+    while (Date.now() - start < AUTO_SAVE_MAX_WAIT_MS) {
+      if (mySeq !== autoSaveSeq) return;            // newer view preempted us
+      if (autopilotRunning) return;                  // autopilot took over
+      if (jobIdFromUrl(location.href) !== jid) return;  // user navigated away
+      if (savedIds.has(jid)) return;                 // already saved
+      if (isJobDomReady()) break;
+      await sleep(AUTO_SAVE_POLL_MS);
+    }
+    // Final guards before we commit to the save
+    if (mySeq !== autoSaveSeq) return;
+    if (autopilotRunning) return;
+    if (jobIdFromUrl(location.href) !== jid) return;
+    if (savedIds.has(jid)) return;
+    saveCurrentJob();  // takes it from here — publishes Extracting → Saving → Saved
   }
 
   // ── init / observer ─────────────────────────────────────────────
