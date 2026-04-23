@@ -31,6 +31,11 @@
     // list on non-view pages). Refetched from /api/events whenever the
     // user opens a different vacancy or adds / removes a timeline event.
     timeline:          [],
+    // On /company/<slug> pages, the canonical name extracted from the
+    // DOM plus an aggregated per-vacancy summary of every touch at this
+    // company (from /api/company-history).
+    currentCompany:    null,  // { slug, name }
+    companyHistory:    [],    // [{ job_id, title, status, last_at, event_count }]
   };
 
   function publishStateToSidebar() {
@@ -61,12 +66,33 @@
   }
 
   // Page context = what the sidebar should show. On /jobs/view/<id> we
-  // surface a "Current Vacancy" section with a manual Save button; on
-  // list pages we surface Autopilot; elsewhere both are hidden.
+  // surface a "Current Vacancy" + Timeline section; on list pages we
+  // surface Autopilot; on /company/<slug> we surface Company History;
+  // elsewhere everything is hidden.
   function getPageMode() {
     if (isJobViewPage()) return "view";
     if (isJobListPage()) return "list";
+    if (isCompanyPage()) return "company";
     return "other";
+  }
+
+  function currentCompanyInfo() {
+    const m = location.href.match(/\/company\/([^/?#]+)/);
+    const slug = m ? m[1] : null;
+    if (!slug) return null;
+    // LinkedIn renders the company name in the org top-card h1. Fall
+    // back to <title> which is usually "<Name> | LinkedIn".
+    const h1 = document.querySelector(
+      "h1.org-top-card-summary__title, .org-top-card-summary h1, main h1"
+    );
+    let name = h1 && h1.innerText ? h1.innerText.trim() : "";
+    if (!name) {
+      const parts = (document.title || "").split(" | ").map((p) => p.trim());
+      name = parts[0] || slug;
+    }
+    // Strip LinkedIn's "verified" badge text that sometimes leaks in
+    name = name.replace(/\s*\(verified\)\s*$/i, "").trim();
+    return { slug, name };
   }
 
   function currentJobInfo() {
@@ -86,16 +112,21 @@
   }
 
   function publishPageContext() {
-    sidebarState.pageMode    = getPageMode();
-    sidebarState.currentJob  = sidebarState.pageMode === "view" ? currentJobInfo() : null;
-    if (sidebarState.pageMode !== "view") sidebarState.timeline = [];
+    const mode = getPageMode();
+    sidebarState.pageMode       = mode;
+    sidebarState.currentJob     = mode === "view"    ? currentJobInfo()     : null;
+    sidebarState.currentCompany = mode === "company" ? currentCompanyInfo() : null;
+    if (mode !== "view")    sidebarState.timeline       = [];
+    if (mode !== "company") sidebarState.companyHistory = [];
     publishStateToSidebar();
-    // View pages trigger a timeline refresh so the sidebar's Application
-    // timeline section reflects the currently-open vacancy. Fire-and-forget
-    // — refreshTimeline pushes state again when it completes.
-    if (sidebarState.pageMode === "view") {
+    // Page-mode-specific data refresh — fire-and-forget; each helper
+    // pushes state again when its fetch completes.
+    if (mode === "view") {
       const jid = sidebarState.currentJob && sidebarState.currentJob.jobId;
       if (jid) refreshTimeline(jid);
+    } else if (mode === "company") {
+      const name = sidebarState.currentCompany && sidebarState.currentCompany.name;
+      if (name) refreshCompanyHistory(name);
     }
   }
 
@@ -105,6 +136,14 @@
     const current = sidebarState.currentJob;
     if (!current || current.jobId !== jobId) return;
     sidebarState.timeline = (r.ok && r.data && Array.isArray(r.data.events)) ? r.data.events : [];
+    publishStateToSidebar();
+  }
+
+  async function refreshCompanyHistory(companyName) {
+    const r = await apiGet(`/api/company-history?company=${encodeURIComponent(companyName)}`);
+    const current = sidebarState.currentCompany;
+    if (!current || current.name !== companyName) return;  // navigated away
+    sidebarState.companyHistory = (r.ok && r.data && Array.isArray(r.data.items)) ? r.data.items : [];
     publishStateToSidebar();
   }
 
@@ -335,6 +374,7 @@
     return /\/jobs\/collections\//.test(location.href) ||
            /\/jobs\/search/.test(location.href);
   }
+  function isCompanyPage() { return /\/company\//.test(location.href); }
 
   // LinkedIn redirects to /help/, /authwall, /checkpoint, /challenge, or
   // /uas/login when its anti-bot heuristics trip. Autopilot must detect

@@ -105,6 +105,39 @@ body { margin: 0; padding: 16px; background: var(--panel-bg); color: var(--ink);
 .tally-secondary-btn:hover { background: var(--surface); border-color: var(--line-2); }
 .tally-secondary-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* Company history (per-vacancy at a company) */
+.tally-company { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.tally-company-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.tally-company-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; max-height: 420px; overflow-y: auto; }
+.tally-company-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); align-items: center; }
+.tally-company-row:last-child { border-bottom: 0; }
+.tally-company-title { font-size: 13px; color: var(--ink); min-width: 0; }
+.tally-company-title a { color: inherit; text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tally-company-title a:hover { color: var(--accent); }
+.tally-company-pill {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 8px; border-radius: 999px;
+  white-space: nowrap;
+}
+.tally-company-pill[data-kind="saved"]     { background: var(--pill-bg); color: var(--warn); }
+.tally-company-pill[data-kind="applied"]   { background: var(--pill-bg); color: var(--accent-2); }
+.tally-company-pill[data-kind="screening"] { background: var(--pill-bg); color: var(--violet); }
+.tally-company-pill[data-kind="interview"] { background: var(--pill-bg); color: var(--ok); }
+.tally-company-pill[data-kind="test_task"] { background: var(--pill-bg); color: #2fa3a0; }
+.tally-company-pill[data-kind="offer"]     { background: var(--pill-bg); color: var(--accent); }
+.tally-company-pill[data-kind="rejected"]  { background: var(--pill-bg); color: #d14343; }
+.tally-company-pill[data-kind="ghosted"]   { background: var(--pill-bg); color: var(--mute); }
+.tally-company-row-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mute-2); }
+.tally-company-row[data-kind="saved"]     .tally-company-row-dot { background: var(--warn); }
+.tally-company-row[data-kind="applied"]   .tally-company-row-dot { background: var(--accent-2); }
+.tally-company-row[data-kind="screening"] .tally-company-row-dot { background: var(--violet); }
+.tally-company-row[data-kind="interview"] .tally-company-row-dot { background: var(--ok); }
+.tally-company-row[data-kind="test_task"] .tally-company-row-dot { background: #2fa3a0; }
+.tally-company-row[data-kind="offer"]     .tally-company-row-dot { background: var(--accent); }
+.tally-company-row[data-kind="rejected"]  .tally-company-row-dot { background: #d14343; }
+.tally-company-row[data-kind="ghosted"]   .tally-company-row-dot { background: var(--mute); }
+
 /* Settings panel (opens on gear click) */
 .tally-settings { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
 .tally-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

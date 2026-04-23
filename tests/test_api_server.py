@@ -185,6 +185,30 @@ def test_parse_auto_seeds_saved_event(client):
     assert body["events"][0]["company"] == "Acme"
 
 
+def test_company_history_aggregates_per_job(client):
+    client.post("/api/events", json={"job_id": "1", "kind": "saved",     "company": "Acme"})
+    client.post("/api/events", json={"job_id": "1", "kind": "applied",   "company": "Acme"})
+    client.post("/api/events", json={"job_id": "2", "kind": "saved",     "company": "Acme"})
+    client.post("/api/events", json={"job_id": "2", "kind": "rejected",  "company": "Acme"})
+    client.post("/api/events", json={"job_id": "9", "kind": "saved",     "company": "Other"})
+    r = client.get("/api/company-history?company=Acme")
+    body = r.json()
+    assert body["company"] == "Acme"
+    assert body["total"] == 2
+    statuses = {it["job_id"]: it["status"] for it in body["items"]}
+    assert statuses == {"1": "applied", "2": "rejected"}
+    assert body["counts"]["applied"] == 1
+    assert body["counts"]["rejected"] == 1
+    assert body["counts"]["saved"] == 0
+
+
+def test_company_history_empty_for_unknown_company(client):
+    r = client.get("/api/company-history?company=NoSuchCo")
+    body = r.json()
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
 def test_migrate_existing_seeds_missing_and_is_idempotent(client, isolated_vault):
     # The conftest vault already has one sample vacancy (job_id=111)
     r1 = client.post("/api/events/migrate-existing")
