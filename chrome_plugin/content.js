@@ -176,10 +176,15 @@
   }
 
   // ── Sidebar message handler ──────────────────────────────────────
+  // Only accept messages whose origin matches this extension. This
+  // blocks LinkedIn scripts from spoofing {from:"tally-sidebar",...}
+  // while staying robust across LinkedIn SPA re-renders (the prior
+  // `event.source === iframe.contentWindow` check silently dropped
+  // legitimate messages whenever the iframe's WindowProxy lost its
+  // identity — e.g. right after DOM mutations).
+  const _EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
   window.addEventListener("message", (event) => {
-    const iframe = document.getElementById(SIDEBAR_ID);
-    // Only accept messages from our own iframe's window
-    if (!iframe || event.source !== iframe.contentWindow) return;
+    if (event.origin !== _EXTENSION_ORIGIN) return;
     const data = event.data;
     if (!data || data.from !== "tally-sidebar") return;
     if (data.type === "sidebar.ready") {

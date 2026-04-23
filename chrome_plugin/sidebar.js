@@ -154,12 +154,15 @@
     saveBtn.disabled = false;
   }
 
-  // Listen for state pushes from the parent (content.js)
+  // Listen for state + settings.result pushes from the parent (content.js)
   window.addEventListener("message", (event) => {
     const data = event.data;
     if (!data || data.to !== "tally-sidebar") return;
     if (data.type === "state") {
       applyState(data.payload);
+    } else if (data.type === "settings.result") {
+      const p = data.payload || {};
+      settingsMsg.textContent = p.ok ? "Saved ✓" : (p.error || "Error");
     }
   });
 
@@ -202,17 +205,6 @@
       { from: "tally-sidebar", type: "settings.save", payload },
       "*"
     );
-  });
-
-  // content.js can echo back a save result via a "settings.result" message
-  window.addEventListener("message", (event) => {
-    const data = event.data;
-    if (!data || data.to !== "tally-sidebar") return;
-    if (data.type === "settings.result") {
-      settingsMsg.textContent = data.payload && data.payload.ok
-        ? "Saved ✓"
-        : (data.payload && data.payload.error) || "Error";
-    }
   });
 
   // Signal readiness — content.js will respond with a "state" message
