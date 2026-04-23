@@ -9,6 +9,7 @@ def test_rate_limiter_persists(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", tmp_path / "rate_limit.json")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     assert config.parsed_today() == 0
     config.register_parse()
     config.register_parse()
@@ -20,6 +21,7 @@ def test_rate_limiter_resets_on_new_day(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", tmp_path / "rate_limit.json")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     (tmp_path / "rate_limit.json").write_text(
         '{"date": "1999-01-01", "parsed": 42}'
     )
@@ -30,6 +32,7 @@ def test_can_parse_more_obeys_cap(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", tmp_path / "rate_limit.json")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(config, "DAILY_PARSE_CAP", 2)
     assert config.can_parse_more()
     config.register_parse()
@@ -42,6 +45,7 @@ def test_remaining_today_never_negative(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", tmp_path / "rate_limit.json")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(config, "DAILY_PARSE_CAP", 1)
     config.register_parse()
     config.register_parse()  # over the cap
