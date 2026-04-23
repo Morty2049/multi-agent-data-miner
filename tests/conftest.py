@@ -7,6 +7,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Don't write .pyc / __pycache__ next to source during tests. Chrome refuses
+# to load unpacked extensions that contain a __pycache__ directory (filename
+# starts with "_"), and chrome_plugin/ is both a Python package AND the
+# extension root — so any pytest run that imports chrome_plugin.api_server
+# would otherwise create chrome_plugin/__pycache__/ and brick the next
+# `Load unpacked`.
+sys.dont_write_bytecode = True
+
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +54,7 @@ def isolated_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "VAULT_DIR", vault)
     monkeypatch.setattr(config, "DATA_DIR", data)
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", data / "rate_limit.json")
+    monkeypatch.setattr(config, "SETTINGS_FILE", data / "settings.json")
 
     monkeypatch.setattr(srv, "VAULT", vault)
     monkeypatch.setattr(srv, "DATA", data)

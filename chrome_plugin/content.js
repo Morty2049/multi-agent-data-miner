@@ -1,5 +1,221 @@
 (() => {
   const BTN_ID = "jm-action-btn";
+
+  // ── Sidebar constants & state ────────────────────────────────────
+  const SIDEBAR_ID            = "tally-sidebar-iframe";
+  const SIDEBAR_CONTAINER_ID  = "tally-sidebar-container";
+  const SIDEBAR_COLLAPSED_KEY = "tally-sidebar-collapsed";
+
+  const sidebarState = {
+    apiOnline:         null,
+    totalVacancies:    null,
+    totalCompanies:    null,
+    parsedToday:       null,
+    dailyCap:          null,
+    autopilotRunning:  false,
+    autopilotProgress: "",
+    // Per-page context for the sidebar. `pageMode` is "list" | "view" |
+    // "other"; `currentJob` is {jobId, title, saved} on view pages and
+    // null otherwise; `saveStatus` is {label, state, working} during and
+    // after a manual Save ("Save to vault" in the sidebar's Current
+    // Vacancy section).
+    pageMode:          "other",
+    currentJob:        null,
+    saveStatus:        null,
+    // Full settings object (mode, daily_cap, randomize_delays, delays_ms)
+    // as returned by GET /api/settings. Populated lazily on first
+    // sidebar.ready and refreshed after each save/preset apply so the
+    // settings panel always renders the latest server truth.
+    settings:          null,
+  };
+
+  function publishStateToSidebar() {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "state", payload: { ...sidebarState } },
+      "*"
+    );
+  }
+
+  async function refreshDashboard() {
+    const r = await apiGet("/api/dashboard");
+    if (r.ok && r.data) {
+      sidebarState.apiOnline      = true;
+      sidebarState.totalVacancies = r.data.total_vacancies ?? null;
+      sidebarState.totalCompanies = r.data.total_companies ?? null;
+      sidebarState.parsedToday    = r.data.parsed_today    ?? null;
+      sidebarState.dailyCap       = r.data.daily_cap       ?? null;
+    } else {
+      sidebarState.apiOnline      = false;
+      sidebarState.totalVacancies = null;
+      sidebarState.totalCompanies = null;
+      sidebarState.parsedToday    = null;
+      sidebarState.dailyCap       = null;
+    }
+    publishStateToSidebar();
+  }
+
+  // Page context = what the sidebar should show. On /jobs/view/<id> we
+  // surface a "Current Vacancy" section with a manual Save button; on
+  // list pages we surface Autopilot; elsewhere both are hidden.
+  function getPageMode() {
+    if (isJobViewPage()) return "view";
+    if (isJobListPage()) return "list";
+    return "other";
+  }
+
+  function currentJobInfo() {
+    const jobId = jobIdFromUrl(location.href);
+    if (!jobId) return null;
+    const panel = getDetailPanel();
+    const titleEl = panel.querySelector(
+      '.job-details-jobs-unified-top-card__job-title, ' +
+      '.jobs-unified-top-card__job-title, h1.t-24, h2.t-24'
+    );
+    let title = titleEl && titleEl.innerText ? titleEl.innerText.trim() : "";
+    if (!title) {
+      const parts = (document.title || "").split(" | ").map((p) => p.trim());
+      title = (parts[0] || "Unknown role").replace(/^\(\d+\)\s*/, "");
+    }
+    return { jobId, title, saved: savedIds.has(jobId) };
+  }
+
+  function publishPageContext() {
+    sidebarState.pageMode    = getPageMode();
+    sidebarState.currentJob  = sidebarState.pageMode === "view" ? currentJobInfo() : null;
+    publishStateToSidebar();
+  }
+
+  function setSaveStatus(status) {
+    sidebarState.saveStatus = status;
+    publishStateToSidebar();
+  }
+
+  // ── Settings wiring ─────────────────────────────────────────────
+  // Sidebar's gear panel reflects whatever GET /api/settings returns.
+  // User actions post {settings.save|settings.preset} messages; we
+  // hit the API, update state, and echo {settings.result} back so the
+  // panel can show "Saved ✓" or an error.
+
+  async function refreshSettings() {
+    const r = await apiGet("/api/settings");
+    if (r.ok && r.data) {
+      sidebarState.settings = r.data;
+      publishStateToSidebar();
+    }
+  }
+
+  function postSettingsResult(ok, error) {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "settings.result", payload: { ok, error } },
+      "*"
+    );
+  }
+
+  async function saveSettingsViaApi(payload) {
+    const r = await apiPut("/api/settings", payload || {});
+    if (!r.ok) { postSettingsResult(false, "API offline"); return; }
+    const body = r.data || {};
+    if (body.error) { postSettingsResult(false, body.message || body.error); return; }
+    sidebarState.settings = body;
+    publishStateToSidebar();
+    refreshDashboard();   // cap might have changed — update today counter
+    postSettingsResult(true);
+  }
+
+  async function applyPresetViaApi(name) {
+    const r = await apiPost(`/api/settings/preset/${encodeURIComponent(name)}`, {});
+    if (!r.ok) { postSettingsResult(false, "API offline"); return; }
+    const body = r.data || {};
+    if (body.error) { postSettingsResult(false, body.message || body.error); return; }
+    sidebarState.settings = body;
+    publishStateToSidebar();
+    refreshDashboard();
+    postSettingsResult(true);
+  }
+
+  function injectSidebar() {
+    if (document.getElementById(SIDEBAR_CONTAINER_ID)) return;
+
+    const container = document.createElement("div");
+    container.id = SIDEBAR_CONTAINER_ID;
+
+    const collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    if (collapsed) container.dataset.collapsed = "1";
+
+    const iframe = document.createElement("iframe");
+    iframe.id  = SIDEBAR_ID;
+    iframe.src = chrome.runtime.getURL("sidebar.html");
+    iframe.title = "Tally sidebar";
+
+    const toggle = document.createElement("button");
+    toggle.id = "tally-sidebar-toggle";
+    toggle.textContent = collapsed ? "›" : "‹";
+    toggle.setAttribute("aria-label", "Toggle Tally sidebar");
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.addEventListener("click", () => {
+      const next = container.dataset.collapsed === "1" ? "0" : "1";
+      if (next === "0") {
+        delete container.dataset.collapsed;
+        toggle.textContent = "‹";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "0");
+      } else {
+        container.dataset.collapsed = "1";
+        toggle.textContent = "›";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
+      }
+      toggle.setAttribute("aria-expanded", String(next !== "1"));
+    });
+
+    container.appendChild(toggle);
+    container.appendChild(iframe);
+    document.body.appendChild(container);
+  }
+
+  // ── Sidebar message handler ──────────────────────────────────────
+  // Only accept messages whose origin matches this extension. This
+  // blocks LinkedIn scripts from spoofing {from:"tally-sidebar",...}
+  // while staying robust across LinkedIn SPA re-renders (the prior
+  // `event.source === iframe.contentWindow` check silently dropped
+  // legitimate messages whenever the iframe's WindowProxy lost its
+  // identity — e.g. right after DOM mutations).
+  const _EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
+  window.addEventListener("message", (event) => {
+    if (event.origin !== _EXTENSION_ORIGIN) return;
+    const data = event.data;
+    if (!data || data.from !== "tally-sidebar") return;
+    if (data.type === "sidebar.ready") {
+      refreshDashboard();
+      publishPageContext();
+      refreshSettings();
+    } else if (data.type === "autopilot.toggle") {
+      runAutopilot();
+    } else if (data.type === "job.save") {
+      saveCurrentJob();
+    } else if (data.type === "settings.open") {
+      refreshSettings();
+    } else if (data.type === "settings.save") {
+      saveSettingsViaApi(data.payload);
+    } else if (data.type === "settings.preset") {
+      const name = data.payload && data.payload.name;
+      if (name) applyPresetViaApi(name);
+    } else if (data.type === "sidebar.close") {
+      const container = document.getElementById(SIDEBAR_CONTAINER_ID);
+      const toggle    = document.getElementById("tally-sidebar-toggle");
+      if (container) {
+        container.dataset.collapsed = "1";
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
+      }
+      if (toggle) {
+        toggle.textContent = "›";
+        toggle.setAttribute("aria-expanded", "false");
+      }
+    }
+  });
+
   let autopilotRunning = false;
   let autopilotAbort = false;
   let savedIds = new Set(); // job_ids already in vault
@@ -18,13 +234,40 @@
     });
   }
 
-  const apiGet = (path) => apiCall("GET", path);
+  const apiGet  = (path)       => apiCall("GET",  path);
   const apiPost = (path, body) => apiCall("POST", path, body);
+  const apiPut  = (path, body) => apiCall("PUT",  path, body);
 
   // ── helpers ──────────────────────────────────────────────────────
 
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
   function randomDelay(lo, hi) { return sleep(lo + Math.random() * (hi - lo)); }
+
+  // Autopilot reads user settings once at the top of each run. All
+  // mid-run delays flow through autopilotDelay(kind) which respects
+  // the fetched min/max pair + randomise flag. Falls back to the
+  // historical "regular" preset if the API is unreachable.
+  const _AUTOPILOT_FALLBACK = {
+    randomize_delays: true,
+    delays_ms: {
+      click_min:           2500, click_max:           5000,
+      between_saves_min:   8000, between_saves_max:  20000,
+      page_transition_min: 4000, page_transition_max: 9000,
+    },
+  };
+  let autopilotSettings = null;
+
+  async function loadAutopilotSettings() {
+    const r = await apiGet("/api/settings");
+    autopilotSettings = (r.ok && r.data && r.data.delays_ms) ? r.data : _AUTOPILOT_FALLBACK;
+  }
+
+  function autopilotDelay(kind) {
+    const s = autopilotSettings || _AUTOPILOT_FALLBACK;
+    const lo = s.delays_ms[`${kind}_min`];
+    const hi = s.delays_ms[`${kind}_max`];
+    return s.randomize_delays ? randomDelay(lo, hi) : sleep(lo);
+  }
 
   function jobIdFromUrl(url) {
     const m = url.match(/\/jobs\/view\/(\d+)/);
@@ -37,6 +280,15 @@
   function isJobListPage() {
     return /\/jobs\/collections\//.test(location.href) ||
            /\/jobs\/search/.test(location.href);
+  }
+
+  // LinkedIn redirects to /help/, /authwall, /checkpoint, /challenge, or
+  // /uas/login when its anti-bot heuristics trip. Autopilot must detect
+  // this and stop immediately — continuing to click/extract against a
+  // safety page trains LinkedIn's detector and risks account restriction.
+  function isOnLinkedInSafetyPage() {
+    return /linkedin\.com\/(help\/|authwall|checkpoint|challenge|uas\/(login|authorize))/
+      .test(location.href);
   }
 
   // ── parsed-ids sync ──────────────────────────────────────────────
@@ -241,31 +493,55 @@
   async function saveCurrentJob() {
     const url = location.href;
     const jobId = jobIdFromUrl(url);
-    if (!jobId) { updateBtn("No job ID", "error"); return; }
+    if (!jobId) {
+      updateBtn("No job ID", "error");
+      setSaveStatus({ state: "error", label: "No job ID on this page", working: false });
+      return;
+    }
 
     // Skip if we already have it
     if (savedIds.has(jobId)) {
       updateBtn("Already saved", "exists");
+      setSaveStatus({ state: "exists", label: "In vault already", working: false });
+      publishPageContext();
       setTimeout(renderActionButton, 3000);
       return;
     }
 
     updateBtn("Extracting...", "working");
+    setSaveStatus({ state: "working", label: "Extracting…", working: true });
     const data = await extractJob(url, jobId);
     updateBtn("Saving...", "working");
+    setSaveStatus({ state: "working", label: "Saving…", working: true });
     const r = await apiPost("/api/parse", data);
-    if (!r.ok) { updateBtn("API offline", "error"); setTimeout(renderActionButton, 4000); return; }
+    if (!r.ok) {
+      updateBtn("API offline", "error");
+      setSaveStatus({ state: "error", label: "API offline", working: false });
+      setTimeout(renderActionButton, 4000);
+      return;
+    }
     const res = r.data;
     if (res.status === "saved") {
       savedIds.add(jobId);
       updateBtn(`Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`, "success");
+      setSaveStatus({
+        state: "saved",
+        label: `Saved (${res.parsed_today}/${res.parsed_today + res.remaining_today})`,
+        working: false,
+      });
+      publishPageContext();
+      refreshDashboard();
     } else if (res.status === "exists") {
       savedIds.add(jobId);
       updateBtn("Already saved", "exists");
+      setSaveStatus({ state: "exists", label: "In vault already", working: false });
+      publishPageContext();
     } else if (res.error === "daily_cap") {
       updateBtn("Daily cap reached", "error");
+      setSaveStatus({ state: "error", label: "Daily cap reached", working: false });
     } else {
       updateBtn("Error: " + (res.error || "unknown"), "error");
+      setSaveStatus({ state: "error", label: "Error: " + (res.error || "unknown"), working: false });
     }
     setTimeout(renderActionButton, 4000);
   }
@@ -363,7 +639,7 @@
         clickEl.scrollIntoView({ behavior: "smooth", block: "center" });
         await sleep(500);
         clickEl.click();
-        await randomDelay(2500, 5000);
+        await autopilotDelay("click");
         if (autopilotAbort) return;
 
         const data = await extractJob(card.href, card.id);
@@ -391,8 +667,18 @@
         }
       } catch { stats.failed++; }
 
-      await randomDelay(8000, 20000);
+      await autopilotDelay("between_saves");
     }
+  }
+
+  // Single writer for the running flag — also syncs sidebar state.
+  // Every mutation of `autopilotRunning` must go through here, or the
+  // sidebar button will fall out of sync with reality (see Phase 1
+  // retro: button stuck on "Stop" after autopilot finished).
+  function setAutopilotRunning(val) {
+    autopilotRunning = val;
+    sidebarState.autopilotRunning = val;
+    publishStateToSidebar();
   }
 
   async function runAutopilot() {
@@ -401,9 +687,10 @@
       updateBtn("Stopping...", "working");
       return;
     }
-    autopilotRunning = true;
+    setAutopilotRunning(true);
     autopilotAbort = false;
 
+    await loadAutopilotSettings();
     await refreshSavedIds();
     markSavedCards();
 
@@ -419,6 +706,10 @@
     let consecutiveEmpty = 0;
 
     while (!autopilotAbort) {
+      if (isOnLinkedInSafetyPage()) {
+        updateBtn("⚠️ LinkedIn safety page — autopilot stopped", "error");
+        break;
+      }
       await processCurrentPage(stats);
       if (stats.capReached) { updateBtn(`Cap! ${stats.saved} saved`, "error"); break; }
       if (autopilotAbort) break;
@@ -439,7 +730,7 @@
       stats.page++;
       const nextUrl = urlWithStart(start);
       updateBtn(`Next page: start=${start}`, "working");
-      await randomDelay(4000, 9000);
+      await autopilotDelay("page_transition");
       if (autopilotAbort) break;
 
       try {
@@ -450,14 +741,18 @@
         return;
       }
       await sleep(3000);
+      if (isOnLinkedInSafetyPage()) {
+        updateBtn("⚠️ LinkedIn safety page — autopilot stopped", "error");
+        break;
+      }
     }
 
+    setAutopilotRunning(false);
+    autopilotAbort = false;
     updateBtn(
       `Done p.${stats.page}: ${stats.saved} saved, ${stats.skipped} skip, ${stats.failed} fail`,
       "success"
     );
-    autopilotRunning = false;
-    autopilotAbort = false;
     setTimeout(renderActionButton, 10000);
   }
 
@@ -469,6 +764,9 @@
     const t = btn.querySelector(".jm-btn-text");
     if (t) t.textContent = text;
     btn.className = `jm-action-btn jm-${state}`;
+    sidebarState.autopilotProgress = text;
+    sidebarState.autopilotRunning  = autopilotRunning;
+    publishStateToSidebar();
   }
 
   function renderActionButton() {
@@ -480,6 +778,13 @@
     }
 
     if (isJobViewPage()) {
+      // Sidebar owns Save on view pages. Hide the floating button to
+      // avoid duplicate UI. Fallback: if sidebar failed to inject, still
+      // render the floating button so Save stays reachable.
+      if (document.getElementById(SIDEBAR_CONTAINER_ID)) {
+        btn.style.display = "none";
+        return;
+      }
       const jid = jobIdFromUrl(location.href);
       const already = jid && savedIds.has(jid);
       btn.className = `jm-action-btn ${already ? "jm-exists" : "jm-ready"}`;
@@ -492,6 +797,13 @@
         <span class="jm-btn-text">${already ? "Already in vault" : "Save to vault"}</span>`;
       btn.onclick = saveCurrentJob;
     } else if (isJobListPage()) {
+      // Sidebar owns Autopilot on list pages. Hide the floating button to
+      // avoid duplicate UI. Fallback: if sidebar failed to inject, still
+      // render the floating button so Autopilot stays reachable.
+      if (document.getElementById(SIDEBAR_CONTAINER_ID)) {
+        btn.style.display = "none";
+        return;
+      }
       btn.className = `jm-action-btn ${autopilotRunning ? "jm-working" : "jm-ready"}`;
       btn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -521,11 +833,22 @@
     observer._timer = setTimeout(() => {
       markSavedCards();
       renderActionButton();
+      if (/\/jobs\//.test(location.href)) {
+        injectSidebar();
+        publishPageContext();
+      }
     }, 1200);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
-  setTimeout(onPageUpdate, 2000);
+  setTimeout(() => {
+    onPageUpdate();
+    if (/\/jobs\//.test(location.href)) {
+      injectSidebar();
+      publishPageContext();
+    }
+  }, 2000);
   // Re-sync periodically in case the vault changes server-side
   setInterval(refreshSavedIds, 60000);
+  setInterval(refreshDashboard, 60000);
 })();
