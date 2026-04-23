@@ -6,6 +6,8 @@ Run with:  venv/bin/pytest tests/ -v
 """
 from __future__ import annotations
 
+import re
+
 
 # ── basic wiring ──────────────────────────────────────────────────
 
@@ -131,6 +133,41 @@ def test_applications_ignores_notes_in_status(client):
     r = client.get("/api/applications")
     statuses = {item["job_id"]: item["status"] for item in r.json()["items"]}
     assert statuses["1"] == "applied"  # note did not shift the status
+
+
+def test_parse_quotes_company_name_with_colon(client, isolated_vault):
+    """Regression: a company called "JTA: The Data Scientists" used to be
+    written as `name: JTA: The Data Scientists`, which PyYAML rejects as
+    'mapping values not allowed here' → the whole company frontmatter
+    became unparseable. Quoting everything fixes it."""
+    import yaml
+    vault, _ = isolated_vault
+    r = client.post("/api/parse", json={
+        "url": "https://linkedin.com/jobs/view/7777",
+        "job_id": "7777",
+        "title": "AI Engineer",
+        "company": "JTA: The Data Scientists",
+        "description_text": "We're hiring an AI engineer with strong Python and LLM pipeline experience.",
+    })
+    assert r.json().get("status") == "saved"
+    # Company file must round-trip through yaml.safe_load. _safe_filename
+    # strips the colon; company filenames (unlike vacancy filenames) keep
+    # spaces as-is, so the resulting filename is "JTA The Data Scientists.md".
+    comp_candidates = list((vault / "Companies").glob("JTA*.md"))
+    assert len(comp_candidates) == 1
+    comp_path = comp_candidates[0]
+    text = comp_path.read_text(encoding="utf-8")
+    fm_match = re.match(r"^---\s*\n(.+?)\n---", text, re.DOTALL)
+    assert fm_match is not None
+    fm = yaml.safe_load(fm_match.group(1))
+    assert fm["name"] == "JTA: The Data Scientists"
+    # Vacancy file must also parse cleanly
+    vac_files = list((vault / "Vacancies").glob("*7777*.md"))
+    assert len(vac_files) == 1
+    vac_fm = yaml.safe_load(
+        re.match(r"^---\s*\n(.+?)\n---", vac_files[0].read_text(), re.DOTALL).group(1)
+    )
+    assert "JTA: The Data Scientists" in vac_fm["company"]
 
 
 def test_parse_auto_seeds_saved_event(client):

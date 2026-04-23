@@ -18,6 +18,7 @@ Run from project root:
 from __future__ import annotations
 
 import datetime
+import json
 import re
 import sys
 from pathlib import Path
@@ -73,6 +74,16 @@ def _sanitize_text(text: str) -> str:
     if not text:
         return text
     return text.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _yaml_str(value: str) -> str:
+    """Serialise an arbitrary string as a double-quoted YAML scalar.
+    JSON strings are a strict subset of YAML double-quoted scalars, so
+    json.dumps gives us proper escaping (\\", \\\\, \\n, \\uXXXX, and
+    — critically for company names like "JTA: The Data Scientists" —
+    keeps the embedded colon from being parsed as a YAML key separator.
+    """
+    return json.dumps(value or "", ensure_ascii=False)
 
 
 def _html_to_markdown(html: str) -> str:
@@ -257,19 +268,24 @@ def parse_from_browser(req: ParseRequest):
     if vac_path.exists():
         return {"status": "exists", "job_id": job_id, "file": vac_filename}
 
+    # Every free-text value goes through _yaml_str so a colon, a stray
+    # quote, or a unicode edge case in the company / location / applies
+    # string can't break the frontmatter. company is wrapped in [[...]]
+    # INSIDE the quoted scalar so Obsidian still treats it as a wikilink.
+    wiki_company = _yaml_str(f"[[{company}]]")
     vacancy_md = f"""---
 date: {today}
 type: vacancy
 source: chrome_extension
 job_id: "{job_id}"
-company: "[[{company}]]"
-location: {req.location}
-reposted: {req.reposted}
-applies: {req.applies}
-employment: {req.employment}
-job_url: {req.url}
-apply_url: Easy Apply (LinkedIn)
-company_url: {req.company_url}
+company: {wiki_company}
+location: {_yaml_str(req.location)}
+reposted: {_yaml_str(req.reposted)}
+applies: {_yaml_str(req.applies)}
+employment: {_yaml_str(req.employment)}
+job_url: {_yaml_str(req.url)}
+apply_url: "Easy Apply (LinkedIn)"
+company_url: {_yaml_str(req.company_url)}
 tags:
   - vacancy
   - chrome_parsed
@@ -294,12 +310,12 @@ tags:
     if not comp_path.exists():
         company_md = f"""---
 type: "[[Company]]"
-name: {company}
+name: {_yaml_str(company)}
 industry: Unknown
 headquarters: Unknown
-link: {req.company_url}
+link: {_yaml_str(req.company_url)}
 website: Unknown
-Company size: Unknown
+company_size: Unknown
 ---
 ## Overview
 
