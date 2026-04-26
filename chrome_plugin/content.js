@@ -1035,7 +1035,7 @@
     observer._timer = setTimeout(() => {
       markSavedCards();
       renderActionButton();
-      if (/\/jobs\//.test(location.href)) {
+      if (/\/(jobs|company|in)\//.test(location.href)) {
         injectSidebar();
         publishPageContext();
         maybeAutoSaveCurrentView();
