@@ -496,6 +496,25 @@ def company_history(company: str):
     return {"company": company, "counts": counts, "items": items, "total": len(items)}
 
 
+@app.post("/api/debug/log")
+def debug_log_append(entry: dict):
+    """Append one debug entry. Wide-open shape — content script writes
+    whatever helps diagnose a routing miss (URL, page_mode, DOM probe
+    results, click hrefs). Stored at data/debug-log.jsonl."""
+    return config.append_debug(entry)
+
+
+@app.get("/api/debug/log")
+def debug_log_read(limit: int = 200):
+    """Return the last `limit` debug entries (newest at the end)."""
+    return {"entries": config.load_debug(limit)}
+
+
+@app.delete("/api/debug/log")
+def debug_log_clear():
+    return {"removed": config.clear_debug()}
+
+
 @app.post("/api/events/migrate-existing")
 def migrate_existing_vacancies():
     """One-shot: seed a "saved" event for every vacancy file in the vault

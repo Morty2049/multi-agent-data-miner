@@ -74,6 +74,7 @@ VAULT_DIR = _resolved_dir("JOB_MINER_VAULT_DIR", REPO_ROOT / "obsidian_vault")
 RATE_LIMIT_FILE = DATA_DIR / "rate_limit.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
+DEBUG_LOG_FILE = DATA_DIR / "debug-log.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +378,51 @@ def latest_status(events: list[dict], job_id: str) -> str:
         if kind in STATUS_KINDS:
             return kind
     return "saved"
+
+
+# ---------------------------------------------------------------------------
+# Debug capture log (developer-only, off by default in production)
+# ---------------------------------------------------------------------------
+#
+# When DEBUG_CAPTURE is on in the content script, every URL change,
+# detected page mode, link click, and company-DOM probe is POSTed here
+# and appended to data/debug-log.jsonl. Used to figure out which
+# LinkedIn paths Tally is missing or misclassifying.
+
+def append_debug(entry: dict) -> dict:
+    payload = dict(entry) if isinstance(entry, dict) else {"raw": entry}
+    payload.setdefault("at", datetime.datetime.now(datetime.timezone.utc).isoformat())
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with DEBUG_LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    return payload
+
+
+def load_debug(limit: int = 200) -> list[dict]:
+    if not DEBUG_LOG_FILE.exists():
+        return []
+    try:
+        raw = DEBUG_LOG_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    lines = raw.splitlines()[-max(1, limit):]
+    out: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    return out
+
+
+def clear_debug() -> int:
+    if not DEBUG_LOG_FILE.exists():
+        return 0
+    n = sum(1 for _ in DEBUG_LOG_FILE.read_text(encoding="utf-8").splitlines() if _.strip())
+    DEBUG_LOG_FILE.unlink()
+    return n
