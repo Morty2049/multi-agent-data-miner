@@ -1,6 +1,30 @@
 (() => {
   const BTN_ID = "jm-action-btn";
 
+  // ── Debug capture (toggle off for production) ───────────────────
+  // Records every URL change, page-mode classification, link click,
+  // and company-DOM probe to data/debug-log.jsonl via POST /api/debug/log.
+  // Used to diagnose which LinkedIn paths Tally misses. NEVER captures
+  // cookies, auth tokens, page text, or anything LinkedIn would consider
+  // a privacy concern — only public URL + selector hit/miss + element
+  // text snippets that the user could copy themselves.
+  const DEBUG_CAPTURE = true;
+  let _lastLoggedUrl = null;
+
+  function debugLog(event, extra) {
+    if (!DEBUG_CAPTURE) return;
+    try {
+      // Use apiCall directly — apiPost is a const arrow defined later,
+      // so it'd be in TDZ if debugLog fires from a top-level listener.
+      apiCall("POST", "/api/debug/log", {
+        event,
+        url: location.href,
+        path: location.pathname + location.search,
+        ...(extra || {}),
+      });
+    } catch (e) { /* never break the page on a debug write */ }
+  }
+
   // ── Sidebar constants & state ────────────────────────────────────
   const SIDEBAR_ID            = "tally-sidebar-iframe";
   const SIDEBAR_CONTAINER_ID  = "tally-sidebar-container";
@@ -80,18 +104,37 @@
     const m = location.href.match(/\/company\/([^/?#]+)/);
     const slug = m ? m[1] : null;
     if (!slug) return null;
-    // LinkedIn renders the company name in the org top-card h1. Fall
-    // back to <title> which is usually "<Name> | LinkedIn".
-    const h1 = document.querySelector(
-      "h1.org-top-card-summary__title, .org-top-card-summary h1, main h1"
-    );
-    let name = h1 && h1.innerText ? h1.innerText.trim() : "";
+    // LinkedIn renders the company name in the org top-card h1.
+    // Probe a list of selectors and report what we found so the debug
+    // log can guide future selector additions.
+    const selectors = [
+      "h1.org-top-card-summary__title",
+      ".org-top-card-summary h1",
+      ".org-top-card__primary-content h1",
+      "main h1",
+    ];
+    const probes = [];
+    let name = "";
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      const hit = !!(el && el.innerText && el.innerText.trim());
+      probes.push({ sel, hit, sample: hit ? el.innerText.trim().slice(0, 80) : null });
+      if (hit && !name) name = el.innerText.trim();
+    }
+    let usedFallback = false;
     if (!name) {
       const parts = (document.title || "").split(" | ").map((p) => p.trim());
       name = parts[0] || slug;
+      usedFallback = true;
     }
     // Strip LinkedIn's "verified" badge text that sometimes leaks in
     name = name.replace(/\s*\(verified\)\s*$/i, "").trim();
+    debugLog("company_dom_probe", {
+      slug,
+      probes,
+      finalName: name,
+      usedTitleFallback: usedFallback,
+    });
     return { slug, name };
   }
 
@@ -113,6 +156,10 @@
 
   function publishPageContext() {
     const mode = getPageMode();
+    if (location.href !== _lastLoggedUrl) {
+      debugLog("url_change", { mode, prev: _lastLoggedUrl });
+      _lastLoggedUrl = location.href;
+    }
     sidebarState.pageMode       = mode;
     sidebarState.currentJob     = mode === "view"    ? currentJobInfo()     : null;
     sidebarState.currentCompany = mode === "company" ? currentCompanyInfo() : null;
@@ -997,6 +1044,27 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // Debug: log link clicks that navigate within /jobs/, /company/, /in/.
+  // Captures destination href + visible text. NEVER captures cookies or
+  // form data. Bounded volume — only the nav links we actually care about.
+  if (DEBUG_CAPTURE) {
+    document.addEventListener("click", (e) => {
+      const a = e.target && e.target.closest && e.target.closest("a[href]");
+      if (!a) return;
+      const href = a.href || "";
+      if (!/linkedin\.com\/(jobs\/|company\/|in\/)/.test(href)) return;
+      debugLog("link_click", {
+        href,
+        text: (a.innerText || "").trim().slice(0, 80),
+      });
+    }, true);
+    debugLog("session_start", {
+      ua_lang: navigator.language,
+      tally_v: "phase-A",
+    });
+  }
+
   setTimeout(() => {
     onPageUpdate();
     if (/\/jobs\//.test(location.href)) {
