@@ -20,6 +20,16 @@
   const companyCount     = document.getElementById("tally-company-count");
   const companyEmpty     = document.getElementById("tally-company-empty");
 
+  // Match section refs
+  const matchSection     = document.getElementById("tally-match-section");
+  const matchPct         = document.getElementById("tally-match-pct");
+  const matchSummary     = document.getElementById("tally-match-summary");
+  const matchSkills      = document.getElementById("tally-match-skills");
+  const matchGapsWrap    = document.getElementById("tally-match-gaps-wrap");
+  const matchGapsList    = document.getElementById("tally-match-gaps");
+  const scoreBtn         = document.getElementById("tally-score-btn");
+  const matchMsg         = document.getElementById("tally-match-msg");
+
   // Timeline refs
   const timelineSection  = document.getElementById("tally-timeline-section");
   const timelineList     = document.getElementById("tally-timeline-list");
@@ -93,12 +103,15 @@
     const job = payload.currentJob;
     if (job && job.jobId) {
       vacancySection.classList.remove("tally-hidden");
+      matchSection.classList.remove("tally-hidden");
       timelineSection.classList.remove("tally-hidden");
       vacancyTitle.textContent = job.title || "Loading…";
       applySaveButton(job, payload.saveStatus);
+      applyMatch(payload.matchScore);
       applyTimeline(payload.timeline || []);
     } else {
       vacancySection.classList.add("tally-hidden");
+      matchSection.classList.add("tally-hidden");
       timelineSection.classList.add("tally-hidden");
     }
     if (mode === "list") {
@@ -237,6 +250,92 @@
     }
   }
 
+  function applyMatch(score) {
+    // score: null | {error, message?, raw?} | {working: true} | {match_pct, summary, skills, gaps, cached_at}
+    matchSkills.innerHTML = "";
+    matchGapsList.innerHTML = "";
+    matchGapsWrap.classList.add("tally-hidden");
+
+    if (!score) {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Score this vacancy";
+      scoreBtn.disabled = false;
+      matchMsg.textContent = "";
+      return;
+    }
+    if (score.working) {
+      matchPct.textContent = "…";
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Scoring…";
+      scoreBtn.disabled = true;
+      matchMsg.textContent = "Asking Gemini…";
+      return;
+    }
+    if (score.error === "no_api_key") {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Score this vacancy";
+      scoreBtn.disabled = true;
+      matchMsg.textContent = "Set GOOGLE_API_KEY in .env to enable scoring";
+      return;
+    }
+    if (score.error) {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Retry score";
+      scoreBtn.disabled = false;
+      matchMsg.textContent = score.message || score.error;
+      return;
+    }
+    // Successful score
+    const pct = Math.max(0, Math.min(100, Math.round(score.match_pct || 0)));
+    matchPct.textContent = pct + "%";
+    matchPct.dataset.tier =
+      pct >= 85 ? "strong" :
+      pct >= 60 ? "" :      // default orange (no tier attribute value)
+      pct >= 40 ? "weak" : "poor";
+    matchSummary.textContent = score.summary || "";
+    scoreBtn.textContent = "Re-score";
+    scoreBtn.disabled = false;
+    matchMsg.textContent = "";
+    // Skills
+    for (const s of (score.skills || [])) {
+      const li = document.createElement("li");
+      li.className = "tally-match-skill";
+      const w = Math.max(0, Math.min(1, Number(s.weight) || 0));
+      li.innerHTML = `
+        <span class="tally-match-skill-name"></span>
+        <span class="tally-match-skill-pct">${Math.round(w * 100)}%</span>
+        <span class="tally-match-skill-bar"><span class="tally-match-skill-bar-fill" style="width:${(w * 100).toFixed(0)}%"></span></span>
+      `;
+      li.querySelector(".tally-match-skill-name").textContent = s.name || "";
+      if (s.evidence) {
+        const ev = document.createElement("div");
+        ev.className = "tally-match-skill-evidence";
+        ev.textContent = s.evidence;
+        li.appendChild(ev);
+      }
+      matchSkills.appendChild(li);
+    }
+    // Gaps
+    const gaps = score.gaps || [];
+    if (gaps.length) {
+      matchGapsWrap.classList.remove("tally-hidden");
+      for (const g of gaps) {
+        const li = document.createElement("li");
+        const sev = (g.severity === "hard" ? "hard" : "soft");
+        li.innerHTML = `<span class="tally-match-gap-severity" data-severity="${sev}">${sev}</span>`;
+        const text = document.createTextNode((g.name || "") + (g.mitigation ? " — " + g.mitigation : ""));
+        li.appendChild(text);
+        matchGapsList.appendChild(li);
+      }
+    }
+  }
+
   function applySaveButton(job, status) {
     saveBtn.classList.remove("tally-btn-running", "tally-btn-saved", "tally-btn-exists");
     saveMsg.textContent = "";
@@ -284,6 +383,8 @@
       } else {
         eventMsg.textContent = p.error || "Error";
       }
+    } else if (data.type === "score.result") {
+      // State push already drives the UI; this is belt-and-braces for future toasts.
     }
   });
 
@@ -294,6 +395,10 @@
   saveBtn.addEventListener("click", () => {
     if (saveBtn.disabled) return;
     window.parent.postMessage({ from: "tally-sidebar", type: "job.save" }, "*");
+  });
+
+  scoreBtn.addEventListener("click", () => {
+    window.parent.postMessage({ from: "tally-sidebar", type: "score.run" }, "*");
   });
 
   eventAddBtn.addEventListener("click", () => {

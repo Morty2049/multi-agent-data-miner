@@ -60,6 +60,7 @@
     // company (from /api/company-history).
     currentCompany:    null,  // { slug, name }
     companyHistory:    [],    // [{ job_id, title, status, last_at, event_count }]
+    matchScore:        null,  // {match_pct, summary, skills, gaps, cached_at} | {error, message} | null
   };
 
   function publishStateToSidebar() {
@@ -171,11 +172,15 @@
     sidebarState.currentJob     = job;
     sidebarState.currentCompany = mode === "company" ? currentCompanyInfo() : null;
     if (!job)               sidebarState.timeline       = [];
+    if (!job)               sidebarState.matchScore     = null;
     if (mode !== "company") sidebarState.companyHistory = [];
     publishStateToSidebar();
     // Fire-and-forget data refreshes; each helper publishes state again
     // when its fetch completes.
-    if (job && job.jobId) refreshTimeline(job.jobId);
+    if (job && job.jobId) {
+      refreshTimeline(job.jobId);
+      refreshMatchScore(job.jobId);
+    }
     if (mode === "company") {
       const name = sidebarState.currentCompany && sidebarState.currentCompany.name;
       if (name) refreshCompanyHistory(name);
@@ -197,6 +202,47 @@
     if (!current || current.name !== companyName) return;  // navigated away
     sidebarState.companyHistory = (r.ok && r.data && Array.isArray(r.data.items)) ? r.data.items : [];
     publishStateToSidebar();
+  }
+
+  async function refreshMatchScore(jobId) {
+    // Try cached first; if {error: "no_score"} treat as null (button shows "Score this vacancy").
+    const r = await apiGet(`/api/score/${encodeURIComponent(jobId)}/cached`);
+    if (!r.ok) { sidebarState.matchScore = null; publishStateToSidebar(); return; }
+    const body = r.data || {};
+    if (body.error === "no_score") {
+      sidebarState.matchScore = null;
+    } else {
+      sidebarState.matchScore = body;
+    }
+    publishStateToSidebar();
+  }
+
+  async function runMatchScoreViaApi() {
+    const job = sidebarState.currentJob;
+    if (!job || !job.jobId) return;
+    // Optimistic UI
+    sidebarState.matchScore = { working: true };
+    publishStateToSidebar();
+    const r = await apiPost(`/api/score/${encodeURIComponent(job.jobId)}`, {});
+    if (!r.ok) {
+      sidebarState.matchScore = { error: "api_offline", message: "API offline" };
+      publishStateToSidebar();
+      postMatchResult(false, "API offline");
+      return;
+    }
+    const body = r.data || {};
+    sidebarState.matchScore = body;
+    publishStateToSidebar();
+    postMatchResult(!body.error, body.message || body.error);
+  }
+
+  function postMatchResult(ok, error) {
+    const iframe = document.getElementById(SIDEBAR_ID);
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage(
+      { to: "tally-sidebar", type: "score.result", payload: { ok, error } },
+      "*"
+    );
   }
 
   function setSaveStatus(status) {
@@ -347,6 +393,8 @@
       if (name) applyPresetViaApi(name);
     } else if (data.type === "event.add") {
       addEventViaApi(data.payload || {});
+    } else if (data.type === "score.run") {
+      runMatchScoreViaApi();
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
