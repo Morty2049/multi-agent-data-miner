@@ -987,8 +987,10 @@
   // past a job and returns to it later gets a retry instead of silence.
   const autoSaveAttempted = new Set();
   let autoSaveSeq = 0;
-  const AUTO_SAVE_SETTLE_MS = 350;      // brief wait so LinkedIn can populate title/company
-  const AUTO_SAVE_DESC_BONUS_MS = 1500; // give description a bit longer if not yet there
+  let lastAutoSaveAt = 0;  // wall-clock ms; respected as a between-saves cooldown
+  const AUTO_SAVE_SETTLE_MS = 350;
+  const AUTO_SAVE_DESC_BONUS_MS = 1500;
+  const AUTO_SAVE_FALLBACK_COOLDOWN_MS = 8000;  // used until /api/settings answers
 
   function isJobDomReady() {
     const panel = getDetailPanel();
@@ -997,29 +999,67 @@
     return (desc.innerText || "").trim().length >= 200;
   }
 
+  function autoSaveCooldownMs() {
+    // Reuse the user's autopilot setting for "minimum gap between
+    // saves". Auto-save was firing every ~2s before, which is what
+    // tripped LinkedIn's a772302 safety page. Honouring the same
+    // cooldown the user already configured for Autopilot keeps the
+    // request rate human-like.
+    const s = autopilotSettings;
+    if (s && s.delays_ms && s.delays_ms.between_saves_min) {
+      return s.delays_ms.between_saves_min;
+    }
+    return AUTO_SAVE_FALLBACK_COOLDOWN_MS;
+  }
+
   async function maybeAutoSaveCurrentView() {
     if (autopilotRunning) return;
+    if (isOnLinkedInSafetyPage()) {
+      setSaveStatus({ state: "error", label: "⚠️ LinkedIn safety page — auto-save paused", working: false });
+      return;
+    }
     const jid = jobIdFromUrl(location.href);
     if (!jid) return;
     if (savedIds.has(jid)) return;
     if (autoSaveAttempted.has(jid)) return;
 
     const mySeq = ++autoSaveSeq;
+
+    // Cooldown phase: enforce a minimum gap between auto-saves so
+    // LinkedIn's anti-bot doesn't see a sub-3s burst of saves and
+    // throw the user onto /help/linkedin/answer/a772302.
+    const cooldown = autoSaveCooldownMs();
+    const sinceLast = Date.now() - lastAutoSaveAt;
+    if (sinceLast < cooldown) {
+      const waitMs = cooldown - sinceLast;
+      setSaveStatus({
+        state: "working",
+        label: `Cooldown ${Math.ceil(waitMs / 1000)}s before save…`,
+        working: true,
+      });
+      await sleep(waitMs);
+      if (mySeq !== autoSaveSeq) return;
+      if (autopilotRunning) return;
+      if (isOnLinkedInSafetyPage()) {
+        setSaveStatus({ state: "error", label: "⚠️ LinkedIn safety page — auto-save paused", working: false });
+        return;
+      }
+      if (jobIdFromUrl(location.href) !== jid) return;
+      if (savedIds.has(jid)) return;
+    }
+
     setSaveStatus({ state: "working", label: "Auto-saving…", working: true });
 
     // Settle phase: wait the bare minimum for LinkedIn to swap the
     // detail pane to the new job's title/company.
     await sleep(AUTO_SAVE_SETTLE_MS);
-    if (mySeq !== autoSaveSeq) return;            // user moved on
+    if (mySeq !== autoSaveSeq) return;
     if (autopilotRunning) return;
     if (jobIdFromUrl(location.href) !== jid) return;
     if (savedIds.has(jid)) return;
 
     // Bonus phase: if the description isn't there yet, give it up to
-    // ~1.5s more — but bail at any point if the user moves on. This
-    // way fast-scrubbers stop losing the previous job; the worst case
-    // is a record with shallow description, which is recoverable by
-    // revisiting the vacancy.
+    // ~1.5s more — but bail at any point if the user moves on.
     const bonusEnd = Date.now() + AUTO_SAVE_DESC_BONUS_MS;
     while (Date.now() < bonusEnd && !isJobDomReady()) {
       await sleep(150);
@@ -1033,7 +1073,8 @@
     if (jobIdFromUrl(location.href) !== jid) return;
     if (savedIds.has(jid)) return;
 
-    autoSaveAttempted.add(jid);  // claim only at the moment we commit to firing
+    autoSaveAttempted.add(jid);
+    lastAutoSaveAt = Date.now();
     saveCurrentJob();
   }
 
@@ -1060,6 +1101,14 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // Pre-load autopilot settings on init so the auto-save cooldown
+  // honours the user's between_saves_min from the very first navigation,
+  // not only after they manually fire Autopilot. Refreshed on every
+  // /api/settings save so changes from the gear panel take effect
+  // without waiting for a Tally restart.
+  loadAutopilotSettings();
+  setInterval(loadAutopilotSettings, 60000);
 
   // History-based URL listener — fires the moment LinkedIn does a
   // pushState (which is how clicking a card in /jobs/search updates
