@@ -982,48 +982,59 @@
   // "Auto-saving…" status the whole time so the user isn't staring at
   // silence wondering what's going on.
 
-  let lastAutoSavedJobId = null;
-  let autoSaveSeq = 0;  // cancels stale polling loops when the user scrubs through jobs
-  const AUTO_SAVE_POLL_MS = 400;
-  const AUTO_SAVE_MAX_WAIT_MS = 6000;
-  const AUTO_SAVE_MIN_DESC_LEN = 200;
+  // jobs we've already attempted in this tab. Set ONLY after save fires
+  // (success or known terminal failure) so a fast-scrub user who blew
+  // past a job and returns to it later gets a retry instead of silence.
+  const autoSaveAttempted = new Set();
+  let autoSaveSeq = 0;
+  const AUTO_SAVE_SETTLE_MS = 350;      // brief wait so LinkedIn can populate title/company
+  const AUTO_SAVE_DESC_BONUS_MS = 1500; // give description a bit longer if not yet there
 
   function isJobDomReady() {
     const panel = getDetailPanel();
     const desc = getJobDescription(panel);
     if (!desc) return false;
-    return (desc.innerText || "").trim().length >= AUTO_SAVE_MIN_DESC_LEN;
+    return (desc.innerText || "").trim().length >= 200;
   }
 
   async function maybeAutoSaveCurrentView() {
     if (autopilotRunning) return;
     const jid = jobIdFromUrl(location.href);
     if (!jid) return;
-    if (jid === lastAutoSavedJobId) return;
-    // Claim the job id even if it's already saved, so rapid re-fires
-    // of the observer don't re-enter this branch.
-    lastAutoSavedJobId = jid;
     if (savedIds.has(jid)) return;
+    if (autoSaveAttempted.has(jid)) return;
 
     const mySeq = ++autoSaveSeq;
-    // Tell the sidebar immediately — don't leave the user in silence.
     setSaveStatus({ state: "working", label: "Auto-saving…", working: true });
 
-    const start = Date.now();
-    while (Date.now() - start < AUTO_SAVE_MAX_WAIT_MS) {
-      if (mySeq !== autoSaveSeq) return;            // newer view preempted us
-      if (autopilotRunning) return;                  // autopilot took over
-      if (jobIdFromUrl(location.href) !== jid) return;  // user navigated away
-      if (savedIds.has(jid)) return;                 // already saved
-      if (isJobDomReady()) break;
-      await sleep(AUTO_SAVE_POLL_MS);
+    // Settle phase: wait the bare minimum for LinkedIn to swap the
+    // detail pane to the new job's title/company.
+    await sleep(AUTO_SAVE_SETTLE_MS);
+    if (mySeq !== autoSaveSeq) return;            // user moved on
+    if (autopilotRunning) return;
+    if (jobIdFromUrl(location.href) !== jid) return;
+    if (savedIds.has(jid)) return;
+
+    // Bonus phase: if the description isn't there yet, give it up to
+    // ~1.5s more — but bail at any point if the user moves on. This
+    // way fast-scrubbers stop losing the previous job; the worst case
+    // is a record with shallow description, which is recoverable by
+    // revisiting the vacancy.
+    const bonusEnd = Date.now() + AUTO_SAVE_DESC_BONUS_MS;
+    while (Date.now() < bonusEnd && !isJobDomReady()) {
+      await sleep(150);
+      if (mySeq !== autoSaveSeq) return;
+      if (autopilotRunning) return;
+      if (jobIdFromUrl(location.href) !== jid) return;
+      if (savedIds.has(jid)) return;
     }
-    // Final guards before we commit to the save
     if (mySeq !== autoSaveSeq) return;
     if (autopilotRunning) return;
     if (jobIdFromUrl(location.href) !== jid) return;
     if (savedIds.has(jid)) return;
-    saveCurrentJob();  // takes it from here — publishes Extracting → Saving → Saved
+
+    autoSaveAttempted.add(jid);  // claim only at the moment we commit to firing
+    saveCurrentJob();
   }
 
   // ── init / observer ─────────────────────────────────────────────
@@ -1049,6 +1060,31 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // History-based URL listener — fires the moment LinkedIn does a
+  // pushState (which is how clicking a card in /jobs/search updates
+  // ?currentJobId=N). Faster than the 1.2s MutationObserver debounce,
+  // which was the reason rapid card-clickers were losing every
+  // intermediate vacancy.
+  (function patchHistoryForUrlListener() {
+    const orig = { ps: history.pushState, rs: history.replaceState };
+    history.pushState    = function (...a) { const r = orig.ps.apply(this, a); window.dispatchEvent(new Event("tally:url")); return r; };
+    history.replaceState = function (...a) { const r = orig.rs.apply(this, a); window.dispatchEvent(new Event("tally:url")); return r; };
+    window.addEventListener("popstate", () => window.dispatchEvent(new Event("tally:url")));
+  })();
+
+  let _urlChangeDebounce = null;
+  window.addEventListener("tally:url", () => {
+    clearTimeout(_urlChangeDebounce);
+    // Tiny debounce — coalesces rapid pushState bursts but doesn't
+    // delay each card swap by more than a frame the user notices.
+    _urlChangeDebounce = setTimeout(() => {
+      if (/\/(jobs|company|in)\//.test(location.href)) {
+        publishPageContext();
+        maybeAutoSaveCurrentView();
+      }
+    }, 80);
+  });
 
   // Debug: log link clicks that navigate within /jobs/, /company/, /in/.
   // Captures destination href + visible text. NEVER captures cookies or
