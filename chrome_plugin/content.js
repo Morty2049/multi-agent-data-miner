@@ -544,6 +544,7 @@
   }
 
   function markScoreBadges() {
+    if (!isJobListPage()) return;
     const cards = document.querySelectorAll(
       '[data-occludable-job-id], ' +
       '.job-card-container, ' +

@@ -71,12 +71,12 @@
   vertical-align: middle;
   letter-spacing: 0.02em;
   color: #fff;
-  background: var(--accent, #ef6a3a);
+  background: #ef6a3a;
   pointer-events: none;
   z-index: 10;
 }
-.tally-score-badge[data-tier="strong"] { background: var(--ok, #2f9e6a); }
-.tally-score-badge[data-tier="weak"]   { background: var(--warn, #d6a33a); color: #2a2a2a; }
+.tally-score-badge[data-tier="strong"] { background: #2f9e6a; }
+.tally-score-badge[data-tier="weak"]   { background: #d6a33a; color: #2a2a2a; }
 .tally-score-badge[data-tier="poor"]   { background: #d14343; }
 
 /* ── Tally sidebar container (host-page styles only) ─────────── */
