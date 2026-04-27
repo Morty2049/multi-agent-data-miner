@@ -48,7 +48,6 @@
   const randomizeBox     = document.getElementById("tally-randomize");
   const matchThresholdInput = document.getElementById("tally-match-threshold-input");
   const matchThresholdValue = document.getElementById("tally-match-threshold-value");
-  const settingsSaveBtn  = document.getElementById("tally-settings-save");
   const settingsMsg      = document.getElementById("tally-settings-msg");
 
   let settingsOpen = false;
@@ -485,14 +484,10 @@
     });
   });
 
-  settingsSaveBtn.addEventListener("click", () => {
-    const payload = collectSettingsFromForm();
-    settingsMsg.textContent = "Saving…";
-    window.parent.postMessage(
-      { from: "tally-sidebar", type: "settings.save", payload },
-      "*"
-    );
-  });
+  // (No explicit "Save settings" button — every settings field auto-saves
+  // on change via saveSettingsAuto. The button was a UX trap: clicking it
+  // after a change just re-saved the same state, with no visible diff
+  // beyond a brief "Saved ✓" flash, which read as "nothing happened.")
 
   // Signal readiness — content.js will respond with a "state" message
   window.parent.postMessage({ from: "tally-sidebar", type: "sidebar.ready" }, "*");
