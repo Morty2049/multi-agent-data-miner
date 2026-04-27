@@ -1073,18 +1073,45 @@
     window.addEventListener("popstate", () => window.dispatchEvent(new Event("tally:url")));
   })();
 
+  // Belt-and-suspenders defence against URL changes the pushState hook
+  // misses (seen in the wild when a LinkedIn framework caches its own
+  // history-method references and bypasses our wrapper): poll every
+  // 800ms and synthesize a tally:url event whenever location.href has
+  // moved since the last tick. Cheap (one string compare per tick) and
+  // guarantees the sidebar can never get stuck on a stale state.
+  let _lastSeenHref = location.href;
+  setInterval(() => {
+    if (location.href !== _lastSeenHref) {
+      _lastSeenHref = location.href;
+      window.dispatchEvent(new Event("tally:url"));
+    }
+  }, 800);
+
   let _urlChangeDebounce = null;
+  function _safePublishContextAndMaybeSave() {
+    try {
+      if (/\/(jobs|company|in)\//.test(location.href)) {
+        publishPageContext();
+        maybeAutoSaveCurrentView();
+      } else {
+        // Off-jobs pages still get a state push so the sidebar clears
+        // any per-page sections that no longer apply.
+        publishPageContext();
+      }
+    } catch (e) { /* never break LinkedIn on a sidebar refresh */ }
+  }
+
   window.addEventListener("tally:url", () => {
     clearTimeout(_urlChangeDebounce);
     // Tiny debounce — coalesces rapid pushState bursts but doesn't
     // delay each card swap by more than a frame the user notices.
-    _urlChangeDebounce = setTimeout(() => {
-      if (/\/(jobs|company|in)\//.test(location.href)) {
-        publishPageContext();
-        maybeAutoSaveCurrentView();
-      }
-    }, 80);
+    _urlChangeDebounce = setTimeout(_safePublishContextAndMaybeSave, 80);
   });
+
+  // Final safety net: re-publish page context every 3s no matter what.
+  // Cheap (one regex + a postMessage) and saves the user from any
+  // missed-update edge case where the sidebar shows just the dashboard.
+  setInterval(_safePublishContextAndMaybeSave, 3000);
 
   // Debug: log link clicks that navigate within /jobs/, /company/, /in/.
   // Captures destination href + visible text. NEVER captures cookies or
