@@ -46,11 +46,14 @@
   const dailyCapInput    = document.getElementById("tally-daily-cap-input");
   const dailyCapUnlimitedBox = document.getElementById("tally-daily-cap-unlimited");
   const randomizeBox     = document.getElementById("tally-randomize");
+  const matchThresholdInput = document.getElementById("tally-match-threshold-input");
+  const matchThresholdValue = document.getElementById("tally-match-threshold-value");
   const settingsSaveBtn  = document.getElementById("tally-settings-save");
   const settingsMsg      = document.getElementById("tally-settings-msg");
 
   let settingsOpen = false;
   let lastPageMode = "other";  // remembered so closing settings restores the right section
+  let _currentThreshold = 80;
 
   function applyState(payload) {
     // API status dot
@@ -130,7 +133,10 @@
 
     // Settings form content — populate whenever content.js pushes
     // fresh settings. Harmless when the panel is closed.
-    if (payload.settings) applySettingsForm(payload.settings);
+    if (payload.settings) {
+      applySettingsForm(payload.settings);
+      _currentThreshold = payload.settings.match_threshold ?? 80;
+    }
   }
 
   function applySettingsForm(s) {
@@ -148,13 +154,20 @@
       dailyCapInput.value = String(s.daily_cap);
     }
     randomizeBox.checked = Boolean(s.randomize_delays);
+    const thr = s.match_threshold ?? 80;
+    matchThresholdInput.value = String(thr);
+    matchThresholdValue.textContent = thr + "%";
   }
 
   function collectSettingsFromForm() {
     const unlimited = dailyCapUnlimitedBox.checked;
     const rawCap = parseInt(dailyCapInput.value, 10);
     const dailyCap = unlimited ? null : (Number.isFinite(rawCap) ? rawCap : undefined);
-    const payload = { randomize_delays: randomizeBox.checked, mode: "custom" };
+    const payload = {
+      randomize_delays: randomizeBox.checked,
+      mode: "custom",
+      match_threshold: parseInt(matchThresholdInput.value, 10),
+    };
     if (dailyCap !== undefined) payload.daily_cap = dailyCap;
     return payload;
   }
@@ -298,6 +311,11 @@
     else if (pct >= 60) matchPct.removeAttribute("data-tier");
     else if (pct >= 40) matchPct.dataset.tier = "weak";
     else matchPct.dataset.tier = "poor";
+    if (pct < _currentThreshold) {
+      matchPct.classList.add("tally-pct-below");
+    } else {
+      matchPct.classList.remove("tally-pct-below");
+    }
     matchSummary.textContent = score.summary || "";
     scoreBtn.textContent = "Re-score";
     scoreBtn.disabled = false;
@@ -420,6 +438,10 @@
   dailyCapUnlimitedBox.addEventListener("change", () => {
     dailyCapInput.disabled = dailyCapUnlimitedBox.checked;
     if (dailyCapUnlimitedBox.checked) dailyCapInput.value = "";
+  });
+
+  matchThresholdInput.addEventListener("input", () => {
+    matchThresholdValue.textContent = matchThresholdInput.value + "%";
   });
 
   presetBtns.forEach((btn) => {

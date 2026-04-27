@@ -51,6 +51,14 @@ def test_put_settings_returns_error_on_invalid_cap(client):
     assert r.json().get("error") == "invalid_settings"
 
 
+def test_put_settings_persists_match_threshold(client):
+    r = client.put("/api/settings", json={"match_threshold": 75})
+    assert r.status_code == 200
+    assert r.json()["match_threshold"] == 75
+    # Reload via GET — persisted
+    assert client.get("/api/settings").json()["match_threshold"] == 75
+
+
 def test_put_settings_null_cap_makes_parse_unlimited(client):
     client.put("/api/settings", json={"daily_cap": None})
     body = client.get("/api/rate").json()

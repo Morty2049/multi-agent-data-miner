@@ -78,6 +78,11 @@
 .tally-score-badge[data-tier="strong"] { background: #2f9e6a; }
 .tally-score-badge[data-tier="weak"]   { background: #d6a33a; color: #2a2a2a; }
 .tally-score-badge[data-tier="poor"]   { background: #d14343; }
+.tally-score-badge[data-below-threshold="true"] { background: #8a8a8a; }
+
+/* Below-threshold card dim */
+.tally-card-below-threshold { opacity: 0.55; transition: opacity 0.2s; }
+.tally-card-below-threshold:hover { opacity: 1; }
 
 /* ── Tally sidebar container (host-page styles only) ─────────── */
 /* The sidebar OVERLAYS LinkedIn's right column rather than pushing the

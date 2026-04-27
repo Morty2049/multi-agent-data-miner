@@ -165,6 +165,7 @@ def _default_settings() -> dict:
         "mode":             "regular",
         "daily_cap":        DAILY_PARSE_CAP,
         "randomize_delays": True,
+        "match_threshold":  80,
         "delays_ms": {
             "click_min":           2500, "click_max":           5000,
             "between_saves_min":   8000, "between_saves_max":  20000,
@@ -177,6 +178,7 @@ PRESETS = {
     "stealth": {
         "daily_cap":        400,
         "randomize_delays": True,
+        "match_threshold":  85,
         "delays_ms": {
             "click_min":           4000, "click_max":           8000,
             "between_saves_min":  20000, "between_saves_max":  45000,
@@ -186,6 +188,7 @@ PRESETS = {
     "regular": {
         "daily_cap":        600,
         "randomize_delays": True,
+        "match_threshold":  80,
         "delays_ms": {
             "click_min":           2500, "click_max":           5000,
             "between_saves_min":   8000, "between_saves_max":  20000,
@@ -195,6 +198,7 @@ PRESETS = {
     "fast": {
         "daily_cap":        1500,
         "randomize_delays": False,
+        "match_threshold":  70,
         "delays_ms": {
             "click_min":            500, "click_max":           1500,
             "between_saves_min":   2000, "between_saves_max":   5000,
@@ -243,6 +247,9 @@ def _validate_settings(s: dict) -> None:
         raise ValueError("daily_cap must be null or integer 1..9999")
     if not isinstance(s.get("randomize_delays"), bool):
         raise ValueError("randomize_delays must be boolean")
+    threshold = s.get("match_threshold")
+    if threshold is not None and not (isinstance(threshold, int) and 0 <= threshold <= 100):
+        raise ValueError("match_threshold must be an integer 0..100")
     dm = s.get("delays_ms")
     if not isinstance(dm, dict):
         raise ValueError("delays_ms must be an object")
@@ -291,6 +298,12 @@ def effective_cap() -> int:
     """Daily cap that /api/parse enforces right now. None in settings = no cap."""
     cap = load_settings().get("daily_cap")
     return _UNLIMITED if cap is None else cap
+
+
+def effective_threshold() -> int:
+    """Match threshold that the UI uses to dim below-threshold cards. Default 80."""
+    threshold = load_settings().get("match_threshold")
+    return threshold if isinstance(threshold, int) else 80
 
 
 # ---------------------------------------------------------------------------

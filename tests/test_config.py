@@ -308,6 +308,51 @@ def test_save_profile_uses_career_ops_ref_as_merge_base(tmp_path, monkeypatch):
     assert "target_range" not in ref_reload.get("compensation", {})
 
 
+# ---------------------------------------------------------------------------
+# match_threshold settings
+# ---------------------------------------------------------------------------
+
+def test_default_settings_includes_match_threshold(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    s = config._default_settings()
+    assert s["match_threshold"] == 80
+
+
+def test_save_settings_rejects_invalid_match_threshold(tmp_path, monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    # Out-of-range integer
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": 150})
+    # Negative
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": -5})
+    # Wrong type
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": "high"})
+
+
+def test_apply_preset_sets_match_threshold(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    assert config.apply_preset("stealth")["match_threshold"] == 85
+    assert config.apply_preset("regular")["match_threshold"] == 80
+    assert config.apply_preset("fast")["match_threshold"] == 70
+
+
+def test_effective_threshold_respects_user_setting(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    config.save_settings({"match_threshold": 65})
+    assert config.effective_threshold() == 65
+
+
 def test_append_and_load_score(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "SCORES_FILE", tmp_path / "scores.jsonl")

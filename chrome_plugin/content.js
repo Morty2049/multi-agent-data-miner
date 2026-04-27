@@ -545,6 +545,8 @@
 
   function markScoreBadges() {
     if (!isJobListPage()) return;
+    const threshold = (autopilotSettings && typeof autopilotSettings.match_threshold === "number")
+      ? autopilotSettings.match_threshold : 80;
     const cards = document.querySelectorAll(
       '[data-occludable-job-id], ' +
       '.job-card-container, ' +
@@ -568,13 +570,22 @@
 
       const score = scoresCache.get(id);
       if (!score) {
-        // We fetched but got no_score — remove any stale badge
+        // We fetched but got no_score — remove any stale badge and dim state
         if (existing) existing.remove();
+        card.classList.remove("tally-card-below-threshold");
         continue;
       }
 
       const pct = Math.round(score.match_pct);
       const tier = _scoreTier(pct);
+      const belowThreshold = pct < threshold;
+
+      // Apply / remove below-threshold dim on the card
+      if (belowThreshold) {
+        card.classList.add("tally-card-below-threshold");
+      } else {
+        card.classList.remove("tally-card-below-threshold");
+      }
 
       if (existing) {
         // Update in place if anything changed
@@ -584,12 +595,20 @@
         } else {
           existing.removeAttribute("data-tier");
         }
+        if (belowThreshold) {
+          existing.dataset.belowThreshold = "true";
+        } else {
+          existing.removeAttribute("data-below-threshold");
+        }
       } else {
         const badge = document.createElement("span");
         badge.className = "tally-score-badge";
         badge.textContent = `Tally ${pct}%`;
         if (tier) {
           badge.dataset.tier = tier;
+        }
+        if (belowThreshold) {
+          badge.dataset.belowThreshold = "true";
         }
         card.appendChild(badge);
       }
