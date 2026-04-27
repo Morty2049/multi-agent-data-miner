@@ -2,9 +2,6 @@
 
 - **Status:** Accepted
 - **Date:** 2026-04-23
-- **Decision-makers:** Aleksei Petrov
-- **Supersedes:** —
-- **Superseded by:** —
 
 ## Context
 
