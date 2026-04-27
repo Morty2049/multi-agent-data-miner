@@ -280,6 +280,7 @@
     const body = r.data || {};
     if (body.error) { postSettingsResult(false, body.message || body.error); return; }
     sidebarState.settings = body;
+    await loadAutopilotSettings();  // refresh so markScoreBadges uses new threshold immediately
     publishStateToSidebar();
     refreshDashboard();   // cap might have changed — update today counter
     postSettingsResult(true);
@@ -291,6 +292,7 @@
     const body = r.data || {};
     if (body.error) { postSettingsResult(false, body.message || body.error); return; }
     sidebarState.settings = body;
+    await loadAutopilotSettings();  // refresh so markScoreBadges uses new threshold immediately
     publishStateToSidebar();
     refreshDashboard();
     postSettingsResult(true);

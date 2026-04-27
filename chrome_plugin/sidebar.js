@@ -92,6 +92,14 @@
     // Progress text
     progressEl.textContent = payload.autopilotProgress || "";
 
+    // Settings form content — populate whenever content.js pushes
+    // fresh settings. Update _currentThreshold BEFORE applyMatch so
+    // the muted-pct visual uses the latest threshold on every render.
+    if (payload.settings) {
+      applySettingsForm(payload.settings);
+      _currentThreshold = payload.settings.match_threshold ?? 80;
+    }
+
     // Page-aware sections. View pages show Save, list pages show
     // Autopilot; settings panel (if open) appears beneath them — they
     // all stay accessible at the same time.
@@ -130,13 +138,6 @@
     } else {
       companySection.classList.add("tally-hidden");
     }
-
-    // Settings form content — populate whenever content.js pushes
-    // fresh settings. Harmless when the panel is closed.
-    if (payload.settings) {
-      applySettingsForm(payload.settings);
-      _currentThreshold = payload.settings.match_threshold ?? 80;
-    }
   }
 
   function applySettingsForm(s) {
@@ -163,11 +164,13 @@
     const unlimited = dailyCapUnlimitedBox.checked;
     const rawCap = parseInt(dailyCapInput.value, 10);
     const dailyCap = unlimited ? null : (Number.isFinite(rawCap) ? rawCap : undefined);
+    const rawThr = parseInt(matchThresholdInput.value, 10);
+    const matchThreshold = Number.isFinite(rawThr) ? rawThr : undefined;
     const payload = {
       randomize_delays: randomizeBox.checked,
       mode: "custom",
-      match_threshold: parseInt(matchThresholdInput.value, 10),
     };
+    if (matchThreshold !== undefined) payload.match_threshold = matchThreshold;
     if (dailyCap !== undefined) payload.daily_cap = dailyCap;
     return payload;
   }
