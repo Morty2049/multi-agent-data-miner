@@ -84,32 +84,34 @@
     // all stay accessible at the same time.
     const mode = payload.pageMode || "other";
     lastPageMode = mode;
-    if (mode === "view") {
+    // Sections are independent of each other — Current Vacancy +
+    // Timeline are driven by the URL having a jobId (works on list
+    // pages with ?currentJobId too, not just /jobs/view/), Autopilot
+    // is driven by pageMode === "list", and Company History by
+    // pageMode === "company". On a list page with a selected card,
+    // the user sees Autopilot AND the per-vacancy Timeline at once.
+    const job = payload.currentJob;
+    if (job && job.jobId) {
       vacancySection.classList.remove("tally-hidden");
-      autopilotSection.classList.add("tally-hidden");
       timelineSection.classList.remove("tally-hidden");
-      companySection.classList.add("tally-hidden");
-      const job = payload.currentJob;
-      vacancyTitle.textContent = (job && job.title) ? job.title : "Loading…";
+      vacancyTitle.textContent = job.title || "Loading…";
       applySaveButton(job, payload.saveStatus);
       applyTimeline(payload.timeline || []);
-    } else if (mode === "list") {
+    } else {
       vacancySection.classList.add("tally-hidden");
+      timelineSection.classList.add("tally-hidden");
+    }
+    if (mode === "list") {
       autopilotSection.classList.remove("tally-hidden");
-      timelineSection.classList.add("tally-hidden");
-      companySection.classList.add("tally-hidden");
-    } else if (mode === "company") {
-      vacancySection.classList.add("tally-hidden");
+    } else {
       autopilotSection.classList.add("tally-hidden");
-      timelineSection.classList.add("tally-hidden");
+    }
+    if (mode === "company") {
       companySection.classList.remove("tally-hidden");
       const co = payload.currentCompany;
       companyName.textContent = (co && co.name) ? co.name : "—";
       applyCompanyHistory(payload.companyHistory || []);
     } else {
-      vacancySection.classList.add("tally-hidden");
-      autopilotSection.classList.add("tally-hidden");
-      timelineSection.classList.add("tally-hidden");
       companySection.classList.add("tally-hidden");
     }
 

@@ -160,18 +160,23 @@
       debugLog("url_change", { mode, prev: _lastLoggedUrl });
       _lastLoggedUrl = location.href;
     }
-    sidebarState.pageMode       = mode;
-    sidebarState.currentJob     = mode === "view"    ? currentJobInfo()     : null;
+    sidebarState.pageMode = mode;
+    // Current job is visible whenever the URL points at *some* vacancy —
+    // either a dedicated /jobs/view/<id> page OR a list page with a
+    // ?currentJobId selected. In LinkedIn's actual workflow the latter
+    // is the common case (user clicks cards in /jobs/search; URL keeps
+    // its list path, only currentJobId changes). Don't gate Current
+    // Vacancy + Timeline behind pageMode === "view" — derive from URL.
+    const job = jobIdFromUrl(location.href) ? currentJobInfo() : null;
+    sidebarState.currentJob     = job;
     sidebarState.currentCompany = mode === "company" ? currentCompanyInfo() : null;
-    if (mode !== "view")    sidebarState.timeline       = [];
+    if (!job)               sidebarState.timeline       = [];
     if (mode !== "company") sidebarState.companyHistory = [];
     publishStateToSidebar();
-    // Page-mode-specific data refresh — fire-and-forget; each helper
-    // pushes state again when its fetch completes.
-    if (mode === "view") {
-      const jid = sidebarState.currentJob && sidebarState.currentJob.jobId;
-      if (jid) refreshTimeline(jid);
-    } else if (mode === "company") {
+    // Fire-and-forget data refreshes; each helper publishes state again
+    // when its fetch completes.
+    if (job && job.jobId) refreshTimeline(job.jobId);
+    if (mode === "company") {
       const name = sidebarState.currentCompany && sidebarState.currentCompany.name;
       if (name) refreshCompanyHistory(name);
     }
