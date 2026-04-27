@@ -987,10 +987,8 @@
   // past a job and returns to it later gets a retry instead of silence.
   const autoSaveAttempted = new Set();
   let autoSaveSeq = 0;
-  let lastAutoSaveAt = 0;  // wall-clock ms; respected as a between-saves cooldown
-  const AUTO_SAVE_SETTLE_MS = 350;
-  const AUTO_SAVE_DESC_BONUS_MS = 1500;
-  const AUTO_SAVE_FALLBACK_COOLDOWN_MS = 8000;  // used until /api/settings answers
+  const AUTO_SAVE_SETTLE_MS = 350;       // bare minimum for LinkedIn to swap detail pane
+  const AUTO_SAVE_DESC_BONUS_MS = 1500;  // give description a bit longer if not yet there
 
   function isJobDomReady() {
     const panel = getDetailPanel();
@@ -999,19 +997,11 @@
     return (desc.innerText || "").trim().length >= 200;
   }
 
-  function autoSaveCooldownMs() {
-    // Reuse the user's autopilot setting for "minimum gap between
-    // saves". Auto-save was firing every ~2s before, which is what
-    // tripped LinkedIn's a772302 safety page. Honouring the same
-    // cooldown the user already configured for Autopilot keeps the
-    // request rate human-like.
-    const s = autopilotSettings;
-    if (s && s.delays_ms && s.delays_ms.between_saves_min) {
-      return s.delays_ms.between_saves_min;
-    }
-    return AUTO_SAVE_FALLBACK_COOLDOWN_MS;
-  }
-
+  // No cooldown for manual auto-save — LinkedIn never sees /api/parse
+  // calls (they go to localhost) and only sees the user's own click
+  // rate, which Tally doesn't accelerate. The user is responsible for
+  // their browsing pace. Autopilot keeps its own randomised cooldowns
+  // because there the *clicks* are programmatic and visible.
   async function maybeAutoSaveCurrentView() {
     if (autopilotRunning) return;
     if (isOnLinkedInSafetyPage()) {
@@ -1024,42 +1014,20 @@
     if (autoSaveAttempted.has(jid)) return;
 
     const mySeq = ++autoSaveSeq;
-
-    // Cooldown phase: enforce a minimum gap between auto-saves so
-    // LinkedIn's anti-bot doesn't see a sub-3s burst of saves and
-    // throw the user onto /help/linkedin/answer/a772302.
-    const cooldown = autoSaveCooldownMs();
-    const sinceLast = Date.now() - lastAutoSaveAt;
-    if (sinceLast < cooldown) {
-      const waitMs = cooldown - sinceLast;
-      setSaveStatus({
-        state: "working",
-        label: `Cooldown ${Math.ceil(waitMs / 1000)}s before save…`,
-        working: true,
-      });
-      await sleep(waitMs);
-      if (mySeq !== autoSaveSeq) return;
-      if (autopilotRunning) return;
-      if (isOnLinkedInSafetyPage()) {
-        setSaveStatus({ state: "error", label: "⚠️ LinkedIn safety page — auto-save paused", working: false });
-        return;
-      }
-      if (jobIdFromUrl(location.href) !== jid) return;
-      if (savedIds.has(jid)) return;
-    }
-
     setSaveStatus({ state: "working", label: "Auto-saving…", working: true });
 
     // Settle phase: wait the bare minimum for LinkedIn to swap the
-    // detail pane to the new job's title/company.
+    // detail pane to the new job's title/company. Without this we'd
+    // sometimes capture the previous job's DOM under the new job_id.
     await sleep(AUTO_SAVE_SETTLE_MS);
     if (mySeq !== autoSaveSeq) return;
     if (autopilotRunning) return;
     if (jobIdFromUrl(location.href) !== jid) return;
     if (savedIds.has(jid)) return;
 
-    // Bonus phase: if the description isn't there yet, give it up to
-    // ~1.5s more — but bail at any point if the user moves on.
+    // Bonus phase: wait up to ~1.5s for description to populate.
+    // Bail at any point if the user moves on; the worst case is a
+    // record with shallow description, recoverable by revisiting.
     const bonusEnd = Date.now() + AUTO_SAVE_DESC_BONUS_MS;
     while (Date.now() < bonusEnd && !isJobDomReady()) {
       await sleep(150);
@@ -1074,7 +1042,6 @@
     if (savedIds.has(jid)) return;
 
     autoSaveAttempted.add(jid);
-    lastAutoSaveAt = Date.now();
     saveCurrentJob();
   }
 
