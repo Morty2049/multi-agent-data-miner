@@ -239,6 +239,11 @@
     const body = r.data || {};
     sidebarState.matchScore = body;
     publishStateToSidebar();
+    // Real-time bridge: surface fresh score on list-page badge immediately
+    if (!body.error) {
+      scoresCache.set(job.jobId, body);
+      markScoreBadges();
+    }
   }
 
   function setSaveStatus(status) {
@@ -408,6 +413,10 @@
   let autopilotRunning = false;
   let autopilotAbort = false;
   let savedIds = new Set(); // job_ids already in vault
+  // Map<job_id, score_dict | null>
+  // null means "we fetched but the backend returned no_score"
+  // absent key means "we haven't checked yet"
+  const scoresCache = new Map();
 
   // ── API proxy via background (avoids MV3 CORS quirks) ───────────
 
@@ -523,6 +532,99 @@
         if (already) already.remove();
       }
     }
+  }
+
+  // ── match-score badges on list cards ─────────────────────────────
+
+  function _scoreTier(pct) {
+    if (pct >= 85) return "strong";
+    if (pct >= 60) return null;    // default orange — omit data-tier attribute
+    if (pct >= 40) return "weak";
+    return "poor";
+  }
+
+  function markScoreBadges() {
+    const cards = document.querySelectorAll(
+      '[data-occludable-job-id], ' +
+      '.job-card-container, ' +
+      '.jobs-search-results__list-item, ' +
+      'li.scaffold-layout__list-item'
+    );
+    for (const card of cards) {
+      let id = card.dataset ? card.dataset.occludableJobId : null;
+      if (!id) {
+        const a = card.querySelector('a[href*="/jobs/view/"]');
+        if (a) id = jobIdFromUrl(a.href);
+      }
+      if (!id) continue;
+
+      const existing = card.querySelector(".tally-score-badge");
+
+      if (!scoresCache.has(id)) {
+        // Not yet fetched — leave card untouched
+        continue;
+      }
+
+      const score = scoresCache.get(id);
+      if (!score) {
+        // We fetched but got no_score — remove any stale badge
+        if (existing) existing.remove();
+        continue;
+      }
+
+      const pct = Math.round(score.match_pct);
+      const tier = _scoreTier(pct);
+
+      if (existing) {
+        // Update in place if anything changed
+        existing.textContent = `Tally ${pct}%`;
+        if (tier) {
+          existing.dataset.tier = tier;
+        } else {
+          existing.removeAttribute("data-tier");
+        }
+      } else {
+        const badge = document.createElement("span");
+        badge.className = "tally-score-badge";
+        badge.textContent = `Tally ${pct}%`;
+        if (tier) {
+          badge.dataset.tier = tier;
+        }
+        card.appendChild(badge);
+      }
+    }
+  }
+
+  async function refreshCachedScoresForVisibleCards() {
+    const cards = document.querySelectorAll(
+      '[data-occludable-job-id], ' +
+      '.job-card-container, ' +
+      '.jobs-search-results__list-item, ' +
+      'li.scaffold-layout__list-item'
+    );
+    const newIds = [];
+    for (const card of cards) {
+      let id = card.dataset ? card.dataset.occludableJobId : null;
+      if (!id) {
+        const a = card.querySelector('a[href*="/jobs/view/"]');
+        if (a) id = jobIdFromUrl(a.href);
+      }
+      if (!id) continue;
+      if (!scoresCache.has(id)) newIds.push(id);
+    }
+    for (const jid of newIds) {
+      // Fire-and-forget per id; cache deduplicates repeat calls
+      apiGet(`/api/score/${encodeURIComponent(jid)}/cached`)
+        .then((r) => {
+          if (r.ok && r.data && !r.data.error) {
+            scoresCache.set(jid, r.data);
+          } else {
+            scoresCache.set(jid, null);
+          }
+          markScoreBadges();
+        });
+    }
+    markScoreBadges();
   }
 
   // ── DOM extraction (scoped to detail panel) ──────────────────────
@@ -1094,6 +1196,7 @@
   async function onPageUpdate() {
     await refreshSavedIds();
     markSavedCards();
+    refreshCachedScoresForVisibleCards();
     renderActionButton();
     maybeAutoSaveCurrentView();
   }
@@ -1158,6 +1261,7 @@
       // LinkedIn re-renders the list (was previously gated behind the
       // 1.2s observer debounce and silently lost badges on fast nav).
       markSavedCards();
+      refreshCachedScoresForVisibleCards();
       if (/\/(jobs|company|in)\//.test(location.href)) {
         publishPageContext();
         maybeAutoSaveCurrentView();

@@ -58,6 +58,27 @@
 }
 .jm-saved-card:hover { opacity: 1; }
 
+/* ── Tally match-score badge on list cards ──────────────────── */
+.tally-score-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--accent, #ef6a3a);
+  pointer-events: none;
+  z-index: 10;
+}
+.tally-score-badge[data-tier="strong"] { background: var(--ok, #2f9e6a); }
+.tally-score-badge[data-tier="weak"]   { background: var(--warn, #d6a33a); color: #2a2a2a; }
+.tally-score-badge[data-tier="poor"]   { background: #d14343; }
+
 /* ── Tally sidebar container (host-page styles only) ─────────── */
 /* The sidebar OVERLAYS LinkedIn's right column rather than pushing the
    page content left. Pushing would require injecting margin on
