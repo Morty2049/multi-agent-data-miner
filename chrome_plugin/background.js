@@ -25,3 +25,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // keep channel open for async sendResponse
   }
 });
+
+// Toolbar icon → no popup; jump straight to a LinkedIn jobs tab.
+// If one is already open, focus it; otherwise create a new tab on the
+// recommended-jobs feed. This is the user's "is the extension live?"
+// signal: a click that does something is unmistakable.
+const JOBS_URL = "https://www.linkedin.com/jobs/collections/recommended/";
+
+chrome.action.onClicked.addListener(async () => {
+  try {
+    // Prefer an existing LinkedIn tab — most likely the one the user
+    // wants to land in. Match any /jobs/ path; fall back to any
+    // linkedin.com tab; create a new one if neither exists.
+    const allLinked = await chrome.tabs.query({ url: "https://www.linkedin.com/*" });
+    const onJobs = allLinked.find((t) => /\/jobs\//.test(t.url || ""));
+    const target = onJobs || allLinked[0];
+    if (target) {
+      await chrome.tabs.update(target.id, { active: true });
+      if (target.windowId !== undefined) {
+        await chrome.windows.update(target.windowId, { focused: true });
+      }
+      // If the existing tab isn't on a /jobs/ page, send it there
+      if (!onJobs) {
+        await chrome.tabs.update(target.id, { url: JOBS_URL });
+      }
+    } else {
+      await chrome.tabs.create({ url: JOBS_URL, active: true });
+    }
+  } catch (err) {
+    // Last-resort fallback — open a new tab even if the queries blew up
+    chrome.tabs.create({ url: JOBS_URL, active: true });
+  }
+});
