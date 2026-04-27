@@ -438,14 +438,40 @@
 
   gearBtn.addEventListener("click", () => toggleSettings(!settingsOpen));
 
+  // ── Auto-save settings on change ────────────────────────────────
+  // Earlier UX required hitting "Save settings" after every tweak. The
+  // Unlimited checkbox in particular felt broken — it greyed out the
+  // input but didn't persist, so users (rightly) expected an immediate
+  // effect and got none. Treating each settings field as a stateful
+  // toggle that auto-persists matches every other modern settings UI
+  // (Notion / Slack / Linear). The explicit Save button stays as a
+  // belt-and-suspenders fallback. Localhost API is free, so the extra
+  // POST per click is fine.
+  function saveSettingsAuto() {
+    const payload = collectSettingsFromForm();
+    settingsMsg.textContent = "Saving…";
+    window.parent.postMessage(
+      { from: "tally-sidebar", type: "settings.save", payload },
+      "*"
+    );
+  }
+
   dailyCapUnlimitedBox.addEventListener("change", () => {
     dailyCapInput.disabled = dailyCapUnlimitedBox.checked;
     if (dailyCapUnlimitedBox.checked) dailyCapInput.value = "";
+    saveSettingsAuto();
   });
+
+  // `change` (not `input`) fires once on blur for text inputs and on
+  // mouseup for sliders — avoids spamming the API while the user types
+  // a digit at a time or drags the slider.
+  dailyCapInput.addEventListener("change", saveSettingsAuto);
+  randomizeBox.addEventListener("change", saveSettingsAuto);
 
   matchThresholdInput.addEventListener("input", () => {
     matchThresholdValue.textContent = matchThresholdInput.value + "%";
   });
+  matchThresholdInput.addEventListener("change", saveSettingsAuto);
 
   presetBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
