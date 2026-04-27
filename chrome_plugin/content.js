@@ -1333,6 +1333,15 @@
       if (/\/(jobs|company|in)\//.test(location.href)) {
         publishPageContext();
         maybeAutoSaveCurrentView();
+        // On list pages, the in-memory savedIds set goes stale between
+        // the 20s periodic syncs (e.g. user saved vacancies in another
+        // tab / browser session). Refresh from server and re-mark so the
+        // green "Saved" badges catch up without forcing an F5. One cheap
+        // /api/parsed-ids round-trip per nav, runs out of band. Reported
+        // 2026-04-27 on /jobs/collections/recommended/.
+        if (isJobListPage()) {
+          refreshSavedIds().then(markSavedCards);
+        }
       } else {
         publishPageContext();
       }
@@ -1376,7 +1385,11 @@
       publishPageContext();
     }
   }, 2000);
-  // Re-sync periodically in case the vault changes server-side
-  setInterval(refreshSavedIds, 60000);
+  // Re-sync periodically in case the vault changes server-side. 20s
+  // matches the user's "I just saved this in another tab and the badge
+  // didn't appear here" pain point; the URL-change handler also kicks
+  // a refresh on list-page navigation, so this interval is the floor,
+  // not the only signal.
+  setInterval(refreshSavedIds, 20000);
   setInterval(refreshDashboard, 60000);
 })();
