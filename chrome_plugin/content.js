@@ -105,13 +105,17 @@
     const m = location.href.match(/\/company\/([^/?#]+)/);
     const slug = m ? m[1] : null;
     if (!slug) return null;
-    // LinkedIn renders the company name in the org top-card h1.
-    // Probe a list of selectors and report what we found so the debug
-    // log can guide future selector additions.
+    // LinkedIn renders the company name in the org top-card h1 on the
+    // overview page. On subpages (/jobs, /about, /people, ...) the h1
+    // sometimes lives deeper in the DOM, so probe a wider list of
+    // selectors and log the probe results so we can spot which one fired.
     const selectors = [
       "h1.org-top-card-summary__title",
       ".org-top-card-summary h1",
       ".org-top-card__primary-content h1",
+      ".org-top-card-summary-info-list h1",
+      ".artdeco-entity-lockup__title",
+      ".scaffold-layout__main h1",
       "main h1",
     ];
     const probes = [];
@@ -123,17 +127,40 @@
       if (hit && !name) name = el.innerText.trim();
     }
     let usedFallback = false;
+    let titleRaw = null;
     if (!name) {
-      const parts = (document.title || "").split(" | ").map((p) => p.trim());
+      // Title fallback. Real-world examples that need cleanup:
+      //   "(23) Devoteam: Jobs | LinkedIn"   ← unread badge + subpage tag
+      //   "Devoteam Portugal | LinkedIn"      ← clean
+      //   "(1) Devoteam | LinkedIn"           ← unread badge only
+      // We split by " | " (LinkedIn's separator), take the first chunk,
+      // then strip the unread-badge prefix and any ": <subpage>" suffix.
+      // If we don't strip these, /api/company-history queries the vault
+      // for "(23) Devoteam: Jobs" and finds nothing (vault stores plain
+      // "Devoteam"). Reported 2026-04-27 on /company/devoteam/jobs/.
+      titleRaw = (document.title || "").trim();
+      const parts = titleRaw.split(" | ").map((p) => p.trim());
       name = parts[0] || slug;
       usedFallback = true;
     }
-    // Strip LinkedIn's "verified" badge text that sometimes leaks in
-    name = name.replace(/\s*\(verified\)\s*$/i, "").trim();
+    // Cleanup pass — applied to BOTH h1-found names and title-fallback
+    // names, since LinkedIn occasionally leaks "(verified)" / "(N)"
+    // badges into the h1 too.
+    const before = name;
+    name = name
+      .replace(/^\(\d+\)\s*/, "")          // leading "(23) " unread badge
+      .replace(/\s*\(verified\)\s*$/i, "") // trailing verified badge
+      .replace(
+        /\s*:\s*(Jobs|About|Posts|People|Insights|Life|Stories|Videos|Events|Newsletters|Followers|Affiliated\s+pages)\s*$/i,
+        ""
+      )                                    // ": Jobs" / ": About" / …
+      .trim();
     debugLog("company_dom_probe", {
       slug,
       probes,
+      titleRaw,
       finalName: name,
+      cleanedFrom: before !== name ? before : null,
       usedTitleFallback: usedFallback,
     });
     return { slug, name };
