@@ -294,10 +294,10 @@
     // Successful score
     const pct = Math.max(0, Math.min(100, Math.round(score.match_pct || 0)));
     matchPct.textContent = pct + "%";
-    matchPct.dataset.tier =
-      pct >= 85 ? "strong" :
-      pct >= 60 ? "" :      // default orange (no tier attribute value)
-      pct >= 40 ? "weak" : "poor";
+    if (pct >= 85) matchPct.dataset.tier = "strong";
+    else if (pct >= 60) matchPct.removeAttribute("data-tier");
+    else if (pct >= 40) matchPct.dataset.tier = "weak";
+    else matchPct.dataset.tier = "poor";
     matchSummary.textContent = score.summary || "";
     scoreBtn.textContent = "Re-score";
     scoreBtn.disabled = false;
@@ -383,8 +383,6 @@
       } else {
         eventMsg.textContent = p.error || "Error";
       }
-    } else if (data.type === "score.result") {
-      // State push already drives the UI; this is belt-and-braces for future toasts.
     }
   });
 

@@ -207,6 +207,9 @@
   async function refreshMatchScore(jobId) {
     // Try cached first; if {error: "no_score"} treat as null (button shows "Score this vacancy").
     const r = await apiGet(`/api/score/${encodeURIComponent(jobId)}/cached`);
+    // Guard against the user having navigated away while the request was in flight
+    const current = sidebarState.currentJob;
+    if (!current || current.jobId !== jobId) return;
     if (!r.ok) { sidebarState.matchScore = null; publishStateToSidebar(); return; }
     const body = r.data || {};
     if (body.error === "no_score") {
@@ -218,31 +221,24 @@
   }
 
   async function runMatchScoreViaApi() {
+    if (sidebarState.matchScore && sidebarState.matchScore.working) return;
     const job = sidebarState.currentJob;
     if (!job || !job.jobId) return;
     // Optimistic UI
     sidebarState.matchScore = { working: true };
     publishStateToSidebar();
     const r = await apiPost(`/api/score/${encodeURIComponent(job.jobId)}`, {});
+    // Guard against the user having navigated away while the POST was in flight
+    const stillCurrent = sidebarState.currentJob;
+    if (!stillCurrent || stillCurrent.jobId !== job.jobId) return;
     if (!r.ok) {
       sidebarState.matchScore = { error: "api_offline", message: "API offline" };
       publishStateToSidebar();
-      postMatchResult(false, "API offline");
       return;
     }
     const body = r.data || {};
     sidebarState.matchScore = body;
     publishStateToSidebar();
-    postMatchResult(!body.error, body.message || body.error);
-  }
-
-  function postMatchResult(ok, error) {
-    const iframe = document.getElementById(SIDEBAR_ID);
-    if (!iframe || !iframe.contentWindow) return;
-    iframe.contentWindow.postMessage(
-      { to: "tally-sidebar", type: "score.result", payload: { ok, error } },
-      "*"
-    );
   }
 
   function setSaveStatus(status) {
