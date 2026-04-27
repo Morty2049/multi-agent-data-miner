@@ -345,3 +345,101 @@ def test_parse_clears_cache_so_dashboard_sees_new_vacancy(client):
     client.post("/api/parse", json=_payload(job_id="9001"))
     after = client.get("/api/dashboard").json()["total_vacancies"]
     assert after == before + 1
+
+
+# ── profile endpoints ─────────────────────────────────────────────────
+
+
+def test_get_profile_returns_dict(client):
+    r = client.get("/api/profile")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, dict)
+    # Loaded from career-ops-ref fallback — must have candidate section
+    assert "candidate" in body
+
+
+def test_put_profile_merges_and_persists(client):
+    r = client.put("/api/profile", json={"candidate": {"full_name": "Test User"}})
+    assert r.status_code == 200
+    assert r.json()["candidate"]["full_name"] == "Test User"
+    # Reload via GET — persisted
+    r2 = client.get("/api/profile")
+    assert r2.json()["candidate"]["full_name"] == "Test User"
+
+
+def test_put_profile_returns_error_on_invalid_target_range(client):
+    r = client.put("/api/profile", json={"compensation": {"target_range": 99999}})
+    body = r.json()
+    assert body.get("error") == "invalid_profile"
+
+
+# ── score endpoints ───────────────────────────────────────────────────
+
+import json as _json
+
+_CANNED_SCORE = _json.dumps({
+    "match_pct": 75,
+    "summary": "Good fit for the role",
+    "skills": [{"name": "Python", "weight": 0.9, "evidence": "8 yrs experience"}],
+    "gaps": [{"name": "AWS", "severity": "soft", "mitigation": "Adjacent GCP usage"}],
+})
+
+
+def _install_fake_scoring(monkeypatch):
+    """Patch scoring.score_vacancy so no real LLM is called in endpoint tests."""
+    from chrome_plugin import scoring
+    monkeypatch.setattr(
+        scoring, "score_vacancy",
+        lambda profile, vacancy, **kw: _json.loads(_CANNED_SCORE),
+    )
+
+
+def test_post_score_happy_path(client, monkeypatch, isolated_vault):
+    _install_fake_scoring(monkeypatch)
+    import os
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    # The fixture vacancy has job_id=111
+    r = client.post("/api/score/111")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["match_pct"] == 75
+    assert "cached_at" in body
+    assert body["job_id"] == "111"
+
+
+def test_post_score_unknown_job_id_returns_error(client, monkeypatch):
+    _install_fake_scoring(monkeypatch)
+    import os
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    r = client.post("/api/score/99999999")
+    body = r.json()
+    assert body.get("error") == "no_vacancy"
+
+
+def test_post_score_no_api_key_returns_error(client, monkeypatch, isolated_vault):
+    _install_fake_scoring(monkeypatch)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    r = client.post("/api/score/111")
+    body = r.json()
+    assert body.get("error") == "no_api_key"
+
+
+def test_get_cached_score_returns_last_result(client, monkeypatch, isolated_vault):
+    _install_fake_scoring(monkeypatch)
+    import os
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    # First create a cached score via POST
+    client.post("/api/score/111")
+    # Then fetch via GET cached
+    r = client.get("/api/score/111/cached")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["match_pct"] == 75
+    assert body["job_id"] == "111"
+
+
+def test_get_cached_score_no_cache_returns_error(client):
+    r = client.get("/api/score/00000/cached")
+    body = r.json()
+    assert body.get("error") == "no_score"

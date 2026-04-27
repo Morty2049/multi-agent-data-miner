@@ -17,10 +17,13 @@ third-party dep). Real environment variables override .env values.
 """
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import os
 from pathlib import Path
+
+import yaml
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +78,13 @@ RATE_LIMIT_FILE = DATA_DIR / "rate_limit.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
 DEBUG_LOG_FILE = DATA_DIR / "debug-log.jsonl"
+PROFILE_FILE = DATA_DIR / "profile.yml"
+SCORES_FILE = DATA_DIR / "scores.jsonl"
+
+# Fallback path for the career-ops reference profile (never written to)
+_CAREER_OPS_PROFILE = REPO_ROOT / "code-references" / "career-ops-ref" / "config" / "profile.yml"
+
+_MINIMAL_PROFILE: dict = {"candidate": {"full_name": ""}}
 
 
 # ---------------------------------------------------------------------------
@@ -426,3 +436,106 @@ def clear_debug() -> int:
     n = sum(1 for _ in DEBUG_LOG_FILE.read_text(encoding="utf-8").splitlines() if _.strip())
     DEBUG_LOG_FILE.unlink()
     return n
+
+
+# ---------------------------------------------------------------------------
+# Candidate profile (career-ops data contract)
+# ---------------------------------------------------------------------------
+#
+# Stored at data/profile.yml (gitignored).  Falls back to the career-ops
+# reference copy if the data/ copy doesn't exist so Aleksei doesn't need to
+# manually copy the file.  Never writes to the reference copy.
+
+def load_profile() -> dict:
+    """Load candidate profile from data/profile.yml.
+
+    Falls back to code-references/career-ops-ref/config/profile.yml if
+    data/profile.yml doesn't exist, and to a minimal shell if neither file
+    is present. Never raises."""
+    for path in (PROFILE_FILE, _CAREER_OPS_PROFILE):
+        if path.exists():
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except (yaml.YAMLError, OSError):
+                continue
+    return copy.deepcopy(_MINIMAL_PROFILE)
+
+
+def _validate_profile(p: dict) -> None:
+    """Minimal validation: must be a dict; compensation.target_range, if
+    present, must be a string. Raises ValueError on violations."""
+    if not isinstance(p, dict):
+        raise ValueError("profile must be an object")
+    comp = p.get("compensation")
+    if comp is not None and isinstance(comp, dict):
+        tr = comp.get("target_range")
+        if tr is not None and not isinstance(tr, str):
+            raise ValueError("compensation.target_range must be a string")
+
+
+def save_profile(partial: dict) -> dict:
+    """Merge partial into the current profile, validate, persist to
+    data/profile.yml.  Returns the full merged state. Raises ValueError on
+    invalid input. Always writes to data/profile.yml, never to career-ops-ref."""
+    if not isinstance(partial, dict):
+        raise ValueError("profile payload must be an object")
+    current = load_profile()
+
+    def _deep_merge(base: dict, patch: dict) -> dict:
+        result = dict(base)
+        for k, v in patch.items():
+            if isinstance(v, dict) and isinstance(result.get(k), dict):
+                result[k] = _deep_merge(result[k], v)
+            else:
+                result[k] = v
+        return result
+
+    merged = _deep_merge(current, partial)
+    _validate_profile(merged)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PROFILE_FILE.write_text(
+        yaml.dump(merged, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Match score cache (append-only JSONL, latest per job_id wins)
+# ---------------------------------------------------------------------------
+
+def append_score(job_id: str, score: dict) -> dict:
+    """Append a score result for job_id to scores.jsonl. Returns the record."""
+    record = {
+        "job_id": job_id,
+        "cached_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        **score,
+    }
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with SCORES_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def load_score(job_id: str) -> dict | None:
+    """Return the most recent cached score for job_id, or None."""
+    if not SCORES_FILE.exists():
+        return None
+    try:
+        raw = SCORES_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    latest = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and rec.get("job_id") == job_id:
+            latest = rec
+    return latest

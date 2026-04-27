@@ -4,12 +4,16 @@ Minimal API server for the Chrome plugin.
 Purpose: be the local "Saved" vault behind LinkedIn's UI.
 
 Endpoints:
-  GET  /api/health       — ping
-  GET  /api/dashboard    — total vacancies/companies, parsed today, freshness
-  GET  /api/rate         — daily cap counter
-  GET  /api/parsed-ids   — set of job_ids already in the vault (for the
-                           "already saved" badge on list pages)
-  POST /api/parse        — save a single vacancy (from content script)
+  GET  /api/health              — ping
+  GET  /api/dashboard           — total vacancies/companies, parsed today, freshness
+  GET  /api/rate                — daily cap counter
+  GET  /api/parsed-ids          — set of job_ids already in the vault (for the
+                                  "already saved" badge on list pages)
+  POST /api/parse               — save a single vacancy (from content script)
+  GET  /api/profile             — return current candidate profile
+  PUT  /api/profile             — merge-patch profile, return full state
+  POST /api/score/{job_id}      — LLM match score for a vacancy
+  GET  /api/score/{job_id}/cached — last cached score without calling LLM
 
 Run from project root:
     venv/bin/uvicorn chrome_plugin.api_server:app --reload --port 8000
@@ -35,6 +39,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import config  # noqa: E402
+from chrome_plugin import scoring  # noqa: E402
 
 VAULT = config.VAULT_DIR
 DATA = config.DATA_DIR
@@ -513,6 +518,87 @@ def debug_log_read(limit: int = 200):
 @app.delete("/api/debug/log")
 def debug_log_clear():
     return {"removed": config.clear_debug()}
+
+
+# ── /api/profile (candidate profile) ─────────────────────────────────
+
+
+@app.get("/api/profile")
+def get_profile():
+    """Return the current candidate profile dict."""
+    return config.load_profile()
+
+
+@app.put("/api/profile")
+def update_profile(payload: dict):
+    """Merge-patch candidate profile and return full state.
+    Returns {"error": "invalid_profile", "message": ...} on validation failure."""
+    try:
+        return config.save_profile(payload)
+    except ValueError as e:
+        return {"error": "invalid_profile", "message": str(e)}
+
+
+# ── /api/score (LLM vacancy match scoring) ───────────────────────────
+
+
+def _read_vacancy_dict(job_id: str) -> dict | None:
+    """Look up the vault file for job_id and return a dict with frontmatter +
+    description_text.  Returns None if not found."""
+    for vac in _scan_vacancies():
+        if vac.get("job_id") == job_id:
+            file_stem = vac.get("file") or ""
+            if not file_stem:
+                return None
+            path = VACANCIES_DIR / f"{file_stem}.md"
+            if not path.exists():
+                return None
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            fm = _parse_frontmatter(raw)
+            # Extract body text after the closing ---
+            body = re.sub(r"^---.*?---\s*", "", raw, count=1, flags=re.DOTALL).strip()
+            return {
+                "job_id": job_id,
+                "title": vac.get("title") or fm.get("title") or "",
+                "company": vac.get("company") or "",
+                "location": str(fm.get("location") or ""),
+                "employment": str(fm.get("employment") or ""),
+                "description_text": body,
+            }
+    return None
+
+
+@app.post("/api/score/{job_id}")
+def score_job(job_id: str):
+    """Run LLM match scoring for the given vacancy. Caches result in
+    data/scores.jsonl. Returns {match_pct, summary, skills, gaps, cached_at}
+    or {"error": "no_vacancy"|"no_api_key"|"llm_error", "message": ...}."""
+    vacancy = _read_vacancy_dict(job_id)
+    if vacancy is None:
+        return {"error": "no_vacancy", "message": f"job_id {job_id!r} not found in vault"}
+
+    import os
+    if not os.environ.get("GOOGLE_API_KEY"):
+        return {"error": "no_api_key", "message": "GOOGLE_API_KEY is not set"}
+
+    profile = config.load_profile()
+    result = scoring.score_vacancy(profile, vacancy)
+
+    if result.get("error"):
+        return {"error": "llm_error", "message": result.get("raw", "")}
+
+    cached = config.append_score(job_id, result)
+    return cached
+
+
+@app.get("/api/score/{job_id}/cached")
+def get_cached_score(job_id: str):
+    """Return the most recent cached score for a vacancy without calling the LLM.
+    Returns {"error": "no_score", "message": ...} if no cache entry exists."""
+    record = config.load_score(job_id)
+    if record is None:
+        return {"error": "no_score", "message": f"No cached score for job_id {job_id!r}"}
+    return record
 
 
 @app.post("/api/events/migrate-existing")
