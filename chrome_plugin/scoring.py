@@ -54,6 +54,8 @@ Rules:
 - Output ONLY the JSON object. Any prose outside the JSON will break the parser.
 """
 
+_MAX_DESCRIPTION_CHARS = 3000
+
 _USER_TEMPLATE = """\
 ## Candidate Profile
 
@@ -69,12 +71,7 @@ Superpowers:
 
 Key proof points:
 {proof_points}
-
-Skills implied by narrative:
-  Python, FastAPI, LLM pipelines, pre-sales, B2B SaaS, system design,
-  API integration, CRM automation, RAG, data pipelines, stakeholder management,
-  demo delivery, solution architecture, project management
-
+{skills_section}
 Deal-breakers (if vacancy triggers these → lower match_pct significantly):
 {deal_breakers}
 
@@ -85,7 +82,7 @@ Company: {company}
 Location: {vac_location}
 Employment: {employment}
 
-Description (truncated to 3000 chars):
+Description (truncated to {max_desc_chars} chars):
 {description}
 """
 
@@ -131,12 +128,27 @@ def _build_prompt(profile: dict, vacancy: dict) -> str:
     deal_breakers = prefs.get("deal_breakers") or []
     db_str = "\n".join(f"  - {d}" for d in deal_breakers) or "  - (none listed)"
 
+    # Build skills section from profile data, not hardcoded
+    skills_lines: list[str] = []
+    for s in superpowers:
+        if isinstance(s, str):
+            skills_lines.append(f"  - {s}")
+    for p in proof_points:
+        if isinstance(p, dict) and p.get("name"):
+            metric = p.get("hero_metric", "")
+            line = f"  - {p['name']}: {metric}" if metric else f"  - {p['name']}"
+            skills_lines.append(line)
+    if skills_lines:
+        skills_section = "Skills implied by narrative:\n" + "\n".join(skills_lines) + "\n\n"
+    else:
+        skills_section = ""
+
     # Vacancy fields
     title = vacancy.get("title") or vacancy.get("job_title") or "(unknown role)"
     company = vacancy.get("company") or "(unknown company)"
     vac_location = vacancy.get("location") or "Not specified"
     employment = vacancy.get("employment") or "Not specified"
-    description = (vacancy.get("description_text") or vacancy.get("description") or "")[:3000]
+    description = (vacancy.get("description_text") or vacancy.get("description") or "")[:_MAX_DESCRIPTION_CHARS]
 
     return _USER_TEMPLATE.format(
         full_name=full_name,
@@ -147,12 +159,14 @@ def _build_prompt(profile: dict, vacancy: dict) -> str:
         target_range=target_range,
         superpowers=sp_str,
         proof_points=pp_str,
+        skills_section=skills_section,
         deal_breakers=db_str,
         title=title,
         company=company,
         vac_location=vac_location,
         employment=employment,
         description=description,
+        max_desc_chars=_MAX_DESCRIPTION_CHARS,
     )
 
 
@@ -223,16 +237,16 @@ def score_vacancy(
         llm = _default_llm
 
     user_prompt = _build_prompt(profile, vacancy)
-    full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
 
-    # First attempt
-    raw = llm(full_prompt)
+    # First attempt — pass only the user turn; _default_llm supplies
+    # _SYSTEM_PROMPT via system_instruction in GenerateContentConfig.
+    raw = llm(user_prompt)
     result = _parse_json_response(raw)
 
     if result is None:
         # Retry with an explicit reminder
         retry_prompt = (
-            full_prompt
+            user_prompt
             + "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no prose."
         )
         raw = llm(retry_prompt)

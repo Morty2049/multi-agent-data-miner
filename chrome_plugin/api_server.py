@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -577,12 +578,18 @@ def score_job(job_id: str):
     if vacancy is None:
         return {"error": "no_vacancy", "message": f"job_id {job_id!r} not found in vault"}
 
-    import os
     if not os.environ.get("GOOGLE_API_KEY"):
         return {"error": "no_api_key", "message": "GOOGLE_API_KEY is not set"}
 
     profile = config.load_profile()
-    result = scoring.score_vacancy(profile, vacancy)
+    try:
+        result = scoring.score_vacancy(profile, vacancy)
+    except Exception as e:
+        return {
+            "error": "scoring_unavailable",
+            "message": str(e) or repr(e),
+            "job_id": job_id,
+        }
 
     if result.get("error"):
         return {"error": "llm_error", "message": result.get("raw", "")}

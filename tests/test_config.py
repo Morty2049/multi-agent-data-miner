@@ -266,6 +266,48 @@ def test_validate_profile_rejects_non_string_target_range(tmp_path, monkeypatch)
         config.save_profile({"compensation": {"target_range": 70000}})
 
 
+def test_save_profile_uses_career_ops_ref_as_merge_base(tmp_path, monkeypatch):
+    """save_profile should load _CAREER_OPS_PROFILE as the merge base (when
+    PROFILE_FILE doesn't exist yet), apply the patch on top, write to
+    PROFILE_FILE, and leave _CAREER_OPS_PROFILE untouched."""
+    import yaml
+    import config
+
+    ref_profile_path = tmp_path / "ref-profile.yml"
+    profile_file_path = tmp_path / "profile.yml"
+
+    # Write a known reference profile
+    ref_data = {
+        "candidate": {"full_name": "Test User", "location": "Lisbon"},
+        "narrative": {"headline": "Senior Engineer"},
+        "compensation": {"currency": "EUR"},
+    }
+    ref_profile_path.write_text(
+        yaml.dump(ref_data, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", ref_profile_path)
+    monkeypatch.setattr(config, "PROFILE_FILE", profile_file_path)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+
+    # PROFILE_FILE does not exist yet — merge base must come from _CAREER_OPS_PROFILE
+    assert not profile_file_path.exists()
+
+    result = config.save_profile({"compensation": {"target_range": "€60K"}})
+
+    # Patched field present
+    assert result["compensation"]["target_range"] == "€60K"
+    # Reference fields also present (merge base was loaded correctly)
+    assert result["candidate"]["full_name"] == "Test User"
+    assert result["narrative"]["headline"] == "Senior Engineer"
+    # PROFILE_FILE was created
+    assert profile_file_path.exists()
+    # _CAREER_OPS_PROFILE was NOT modified (reference stays clean)
+    ref_reload = yaml.safe_load(ref_profile_path.read_text(encoding="utf-8"))
+    assert "target_range" not in ref_reload.get("compensation", {})
+
+
 def test_append_and_load_score(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "SCORES_FILE", tmp_path / "scores.jsonl")
