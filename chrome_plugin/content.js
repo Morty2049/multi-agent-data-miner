@@ -8,7 +8,7 @@
   // cookies, auth tokens, page text, or anything LinkedIn would consider
   // a privacy concern — only public URL + selector hit/miss + element
   // text snippets that the user could copy themselves.
-  const DEBUG_CAPTURE = true;
+  const DEBUG_CAPTURE = false;
   let _lastLoggedUrl = null;
 
   function debugLog(event, extra) {
