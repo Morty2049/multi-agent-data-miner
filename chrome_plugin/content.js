@@ -910,6 +910,22 @@
 
   function urlWithStart(n) {
     const u = new URL(location.href);
+    // Strip transient params LinkedIn (or the user) sometimes injects
+    // mid-session. If we don't drop these before pushState, the next
+    // page URL becomes e.g. `?start=25&refresh=true&currentJobId=42…`,
+    // which makes LinkedIn's SPA re-render the result list right when
+    // autopilot is mid-flight: the DOM nodes in `pending` detach, every
+    // subsequent click hits a stale node, save attempts fail silently,
+    // and autopilot looks "hung" for 10+ minutes until consecutiveEmpty
+    // hits 2 and it stops. (Bug seen 2026-04-27 with the
+    // `?refresh=true&currentJobId=4399796203` URL.)
+    //   - refresh=true     → LinkedIn refresh button / session refresh
+    //   - currentJobId=N   → which card is highlighted; autopilot picks
+    //                        its own from the list
+    //   - origin=…         → entry-path tag; irrelevant after page 1
+    ["refresh", "currentJobId", "origin"].forEach((p) =>
+      u.searchParams.delete(p)
+    );
     u.searchParams.set("start", String(n));
     return u.toString();
   }
