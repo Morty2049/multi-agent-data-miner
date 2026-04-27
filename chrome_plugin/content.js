@@ -919,11 +919,14 @@
     // and autopilot looks "hung" for 10+ minutes until consecutiveEmpty
     // hits 2 and it stops. (Bug seen 2026-04-27 with the
     // `?refresh=true&currentJobId=4399796203` URL.)
-    //   - refresh=true     → LinkedIn refresh button / session refresh
-    //   - currentJobId=N   → which card is highlighted; autopilot picks
-    //                        its own from the list
-    //   - origin=…         → entry-path tag; irrelevant after page 1
-    ["refresh", "currentJobId", "origin"].forEach((p) =>
+    //   - refresh=true       → LinkedIn refresh button / session refresh
+    //   - currentJobId=N     → which card is highlighted; autopilot
+    //                          picks its own from the list
+    //   - origin=…           → entry-path tag; irrelevant after page 1
+    //   - discoveryOrigin=…  → same kind of tag for /jobs/collections/
+    //                          (e.g. JOBS_HOME_JYMBII); seen 2026-04-27
+    //                          on /jobs/collections/recommended/
+    ["refresh", "currentJobId", "origin", "discoveryOrigin"].forEach((p) =>
       u.searchParams.delete(p)
     );
     u.searchParams.set("start", String(n));
