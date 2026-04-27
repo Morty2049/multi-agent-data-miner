@@ -1110,41 +1110,47 @@
   loadAutopilotSettings();
   setInterval(loadAutopilotSettings, 60000);
 
-  // History-based URL listener — fires the moment LinkedIn does a
-  // pushState (which is how clicking a card in /jobs/search updates
-  // ?currentJobId=N). Faster than the 1.2s MutationObserver debounce,
-  // which was the reason rapid card-clickers were losing every
-  // intermediate vacancy.
-  (function patchHistoryForUrlListener() {
-    const orig = { ps: history.pushState, rs: history.replaceState };
-    history.pushState    = function (...a) { const r = orig.ps.apply(this, a); window.dispatchEvent(new Event("tally:url")); return r; };
-    history.replaceState = function (...a) { const r = orig.rs.apply(this, a); window.dispatchEvent(new Event("tally:url")); return r; };
-    window.addEventListener("popstate", () => window.dispatchEvent(new Event("tally:url")));
-  })();
-
-  // Belt-and-suspenders defence against URL changes the pushState hook
-  // misses (seen in the wild when a LinkedIn framework caches its own
-  // history-method references and bypasses our wrapper): poll every
-  // 800ms and synthesize a tally:url event whenever location.href has
-  // moved since the last tick. Cheap (one string compare per tick) and
-  // guarantees the sidebar can never get stuck on a stale state.
+  // URL-change detection — pure polling, no history-method patching.
+  //
+  // Earlier versions monkey-patched history.pushState/replaceState to
+  // get instant URL-change notifications. That works, but it's a
+  // detectable client-side fingerprint: any defensive script can call
+  // `history.pushState.toString()` and see our wrapper instead of
+  // `[native code]`. Anti-bot systems do this routinely. Removed.
+  //
+  // What we use instead:
+  //  - popstate event (back/forward — fires natively, no patching needed)
+  //  - 200ms location.href poll (one string compare per tick — invisible
+  //    to any fingerprinting, can't be blocked, fires within a frame
+  //    of any URL change including pushState'd ones)
+  //  - DOM MutationObserver (already wired below; catches LinkedIn's
+  //    detail-pane swap with its own 1.2s debounce, as a third backup)
   let _lastSeenHref = location.href;
   setInterval(() => {
     if (location.href !== _lastSeenHref) {
       _lastSeenHref = location.href;
       window.dispatchEvent(new Event("tally:url"));
     }
-  }, 800);
+  }, 200);
+  window.addEventListener("popstate", () => {
+    if (location.href !== _lastSeenHref) {
+      _lastSeenHref = location.href;
+      window.dispatchEvent(new Event("tally:url"));
+    }
+  });
 
   let _urlChangeDebounce = null;
   function _safePublishContextAndMaybeSave() {
     try {
+      // markSavedCards on every tick — cheap querySelectorAll over the
+      // visible card list, keeps the green "Saved" badges in sync as
+      // LinkedIn re-renders the list (was previously gated behind the
+      // 1.2s observer debounce and silently lost badges on fast nav).
+      markSavedCards();
       if (/\/(jobs|company|in)\//.test(location.href)) {
         publishPageContext();
         maybeAutoSaveCurrentView();
       } else {
-        // Off-jobs pages still get a state push so the sidebar clears
-        // any per-page sections that no longer apply.
         publishPageContext();
       }
     } catch (e) { /* never break LinkedIn on a sidebar refresh */ }
@@ -1152,14 +1158,12 @@
 
   window.addEventListener("tally:url", () => {
     clearTimeout(_urlChangeDebounce);
-    // Tiny debounce — coalesces rapid pushState bursts but doesn't
-    // delay each card swap by more than a frame the user notices.
+    // Tiny debounce — coalesces rapid bursts but doesn't delay each
+    // card swap by more than a frame the user notices.
     _urlChangeDebounce = setTimeout(_safePublishContextAndMaybeSave, 80);
   });
 
-  // Final safety net: re-publish page context every 3s no matter what.
-  // Cheap (one regex + a postMessage) and saves the user from any
-  // missed-update edge case where the sidebar shows just the dashboard.
+  // Final safety net: re-publish + re-mark every 3s no matter what.
   setInterval(_safePublishContextAndMaybeSave, 3000);
 
   // Debug: log link clicks that navigate within /jobs/, /company/, /in/.
