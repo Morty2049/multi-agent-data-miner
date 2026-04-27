@@ -1333,14 +1333,23 @@
       if (/\/(jobs|company|in)\//.test(location.href)) {
         publishPageContext();
         maybeAutoSaveCurrentView();
-        // On list pages, the in-memory savedIds set goes stale between
+        // On list pages the in-memory savedIds set goes stale between
         // the 20s periodic syncs (e.g. user saved vacancies in another
-        // tab / browser session). Refresh from server and re-mark so the
-        // green "Saved" badges catch up without forcing an F5. One cheap
-        // /api/parsed-ids round-trip per nav, runs out of band. Reported
-        // 2026-04-27 on /jobs/collections/recommended/.
+        // tab / browser session). Refresh from server, then re-mark
+        // SEVERAL times — LinkedIn lazy-renders the card list in waves
+        // (fast network: ~150ms; slow network: 1-2s), and a single mark
+        // at 80ms post-nav often hits an empty DOM. Reported 2026-04-27
+        // on /jobs/collections/recommended/: badges only appeared after
+        // F5 because the original single mark + 1.2s observer debounce
+        // missed the window between cards arriving and the heartbeat.
         if (isJobListPage()) {
-          refreshSavedIds().then(markSavedCards);
+          refreshSavedIds().then(() => {
+            // Stagger marks while cards are likely still arriving.
+            markSavedCards();
+            setTimeout(markSavedCards, 300);
+            setTimeout(markSavedCards, 900);
+            setTimeout(markSavedCards, 1800);
+          });
         }
       } else {
         publishPageContext();

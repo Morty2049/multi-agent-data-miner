@@ -457,7 +457,18 @@
 
   dailyCapUnlimitedBox.addEventListener("change", () => {
     dailyCapInput.disabled = dailyCapUnlimitedBox.checked;
-    if (dailyCapUnlimitedBox.checked) dailyCapInput.value = "";
+    if (dailyCapUnlimitedBox.checked) {
+      dailyCapInput.value = "";
+    } else if (!dailyCapInput.value) {
+      // User just unchecked Unlimited but the input is empty — without
+      // a value, collectSettingsFromForm() resolves daily_cap to
+      // `undefined`, the merge-patch backend doesn't touch the
+      // null-stored cap, and the next applyState() re-checks the box
+      // because daily_cap is still null on disk. Pre-fill a sane
+      // default so the unsave actually persists. 600 = the Regular
+      // preset's cap.
+      dailyCapInput.value = "600";
+    }
     saveSettingsAuto();
   });
 
