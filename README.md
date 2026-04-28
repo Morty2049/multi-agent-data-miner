@@ -47,6 +47,55 @@ the DOM LinkedIn already rendered for you.
 Writes nothing to LinkedIn — purely read-only scraping of the DOM you're
 already viewing.
 
+## Match scoring
+
+Tally can score each saved vacancy against your profile using Gemini-Flash,
+returning a 0–100 percentage with a short summary, ranked skill matches, and
+gaps. Scores show as a coloured `tally-match` badge on each LinkedIn list-page
+card and as a detailed breakdown in the sidebar's Match section. Below-threshold
+cards dim so you can scan past noise.
+
+### Setup
+
+1. Get a key at `https://aistudio.google.com/apikey`
+2. `export GEMINI_API_KEY=...` — note that `data/settings.json` deliberately
+   does NOT store the key (it's vault-adjacent and shouldn't carry secrets)
+3. Restart the API server
+
+If `GEMINI_API_KEY` is missing, scoring just returns `scoring_unavailable` —
+the rest of the extension keeps working.
+
+### Tuning
+
+Three knobs:
+
+- **Preset** (Stealth / Regular / Fast) — Stealth defaults to threshold 85 %,
+  Regular 80 %, Fast 70 % (fast scrubbing wants more cards visible).
+- **Threshold slider** in the sidebar gear → 0–100 % override. Cards below
+  threshold dim to ~55 % opacity but stay clickable.
+- **Profile** at `data/profile.yml` — the scoring prompt is derived from
+  `profile.narrative.superpowers` and `profile.narrative.proof_points`, so
+  editing your profile re-tunes future scores. Existing scores are cached in
+  `data/scores.jsonl`; delete the file to re-score.
+
+### Tier colours
+
+| Tier | Range | Badge colour |
+|---|---|---|
+| Strong | ≥ 80 % | green |
+| OK | 60–79 % | orange |
+| Weak | 40–59 % | yellow |
+| Poor | < 40 % | red |
+| Below threshold | (your slider) | grey |
+
+### Cost
+
+≈ $0.0003 per scored vacancy on Gemini-Flash; cached forever in
+`data/scores.jsonl` so re-viewing is free.
+
+See [docs/adr/0002-match-scoring.md](docs/adr/0002-match-scoring.md) for the
+design rationale.
+
 ## Quick start
 
 Prereqs: Python 3.11+, Google Chrome.

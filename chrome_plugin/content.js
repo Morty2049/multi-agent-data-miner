@@ -60,6 +60,7 @@
     // company (from /api/company-history).
     currentCompany:    null,  // { slug, name }
     companyHistory:    [],    // [{ job_id, title, status, last_at, event_count }]
+    matchScore:        null,  // {match_pct, summary, skills, gaps, cached_at} | {error, message} | null
   };
 
   function publishStateToSidebar() {
@@ -104,13 +105,17 @@
     const m = location.href.match(/\/company\/([^/?#]+)/);
     const slug = m ? m[1] : null;
     if (!slug) return null;
-    // LinkedIn renders the company name in the org top-card h1.
-    // Probe a list of selectors and report what we found so the debug
-    // log can guide future selector additions.
+    // LinkedIn renders the company name in the org top-card h1 on the
+    // overview page. On subpages (/jobs, /about, /people, ...) the h1
+    // sometimes lives deeper in the DOM, so probe a wider list of
+    // selectors and log the probe results so we can spot which one fired.
     const selectors = [
       "h1.org-top-card-summary__title",
       ".org-top-card-summary h1",
       ".org-top-card__primary-content h1",
+      ".org-top-card-summary-info-list h1",
+      ".artdeco-entity-lockup__title",
+      ".scaffold-layout__main h1",
       "main h1",
     ];
     const probes = [];
@@ -122,17 +127,40 @@
       if (hit && !name) name = el.innerText.trim();
     }
     let usedFallback = false;
+    let titleRaw = null;
     if (!name) {
-      const parts = (document.title || "").split(" | ").map((p) => p.trim());
+      // Title fallback. Real-world examples that need cleanup:
+      //   "(23) Devoteam: Jobs | LinkedIn"   ← unread badge + subpage tag
+      //   "Devoteam Portugal | LinkedIn"      ← clean
+      //   "(1) Devoteam | LinkedIn"           ← unread badge only
+      // We split by " | " (LinkedIn's separator), take the first chunk,
+      // then strip the unread-badge prefix and any ": <subpage>" suffix.
+      // If we don't strip these, /api/company-history queries the vault
+      // for "(23) Devoteam: Jobs" and finds nothing (vault stores plain
+      // "Devoteam"). Reported 2026-04-27 on /company/devoteam/jobs/.
+      titleRaw = (document.title || "").trim();
+      const parts = titleRaw.split(" | ").map((p) => p.trim());
       name = parts[0] || slug;
       usedFallback = true;
     }
-    // Strip LinkedIn's "verified" badge text that sometimes leaks in
-    name = name.replace(/\s*\(verified\)\s*$/i, "").trim();
+    // Cleanup pass — applied to BOTH h1-found names and title-fallback
+    // names, since LinkedIn occasionally leaks "(verified)" / "(N)"
+    // badges into the h1 too.
+    const before = name;
+    name = name
+      .replace(/^\(\d+\)\s*/, "")          // leading "(23) " unread badge
+      .replace(/\s*\(verified\)\s*$/i, "") // trailing verified badge
+      .replace(
+        /\s*:\s*(Jobs|About|Posts|People|Insights|Life|Stories|Videos|Events|Newsletters|Followers|Affiliated\s+pages)\s*$/i,
+        ""
+      )                                    // ": Jobs" / ": About" / …
+      .trim();
     debugLog("company_dom_probe", {
       slug,
       probes,
+      titleRaw,
       finalName: name,
+      cleanedFrom: before !== name ? before : null,
       usedTitleFallback: usedFallback,
     });
     return { slug, name };
@@ -171,11 +199,15 @@
     sidebarState.currentJob     = job;
     sidebarState.currentCompany = mode === "company" ? currentCompanyInfo() : null;
     if (!job)               sidebarState.timeline       = [];
+    if (!job)               sidebarState.matchScore     = null;
     if (mode !== "company") sidebarState.companyHistory = [];
     publishStateToSidebar();
     // Fire-and-forget data refreshes; each helper publishes state again
     // when its fetch completes.
-    if (job && job.jobId) refreshTimeline(job.jobId);
+    if (job && job.jobId) {
+      refreshTimeline(job.jobId);
+      refreshMatchScore(job.jobId);
+    }
     if (mode === "company") {
       const name = sidebarState.currentCompany && sidebarState.currentCompany.name;
       if (name) refreshCompanyHistory(name);
@@ -197,6 +229,48 @@
     if (!current || current.name !== companyName) return;  // navigated away
     sidebarState.companyHistory = (r.ok && r.data && Array.isArray(r.data.items)) ? r.data.items : [];
     publishStateToSidebar();
+  }
+
+  async function refreshMatchScore(jobId) {
+    // Try cached first; if {error: "no_score"} treat as null (button shows "Score this vacancy").
+    const r = await apiGet(`/api/score/${encodeURIComponent(jobId)}/cached`);
+    // Guard against the user having navigated away while the request was in flight
+    const current = sidebarState.currentJob;
+    if (!current || current.jobId !== jobId) return;
+    if (!r.ok) { sidebarState.matchScore = null; publishStateToSidebar(); return; }
+    const body = r.data || {};
+    if (body.error === "no_score") {
+      sidebarState.matchScore = null;
+    } else {
+      sidebarState.matchScore = body;
+    }
+    publishStateToSidebar();
+  }
+
+  async function runMatchScoreViaApi() {
+    if (sidebarState.matchScore && sidebarState.matchScore.working) return;
+    const job = sidebarState.currentJob;
+    if (!job || !job.jobId) return;
+    // Optimistic UI
+    sidebarState.matchScore = { working: true };
+    publishStateToSidebar();
+    const r = await apiPost(`/api/score/${encodeURIComponent(job.jobId)}`, {});
+    // Guard against the user having navigated away while the POST was in flight
+    const stillCurrent = sidebarState.currentJob;
+    if (!stillCurrent || stillCurrent.jobId !== job.jobId) return;
+    if (!r.ok) {
+      sidebarState.matchScore = { error: "api_offline", message: "API offline" };
+      publishStateToSidebar();
+      return;
+    }
+    const body = r.data || {};
+    sidebarState.matchScore = body;
+    publishStateToSidebar();
+    // Real-time bridge: surface fresh score on list-page badge immediately
+    if (!body.error) {
+      scoresCache.set(job.jobId, body);
+      markScoreBadges();
+    }
   }
 
   function setSaveStatus(status) {
@@ -233,6 +307,7 @@
     const body = r.data || {};
     if (body.error) { postSettingsResult(false, body.message || body.error); return; }
     sidebarState.settings = body;
+    await loadAutopilotSettings();  // refresh so markScoreBadges uses new threshold immediately
     publishStateToSidebar();
     refreshDashboard();   // cap might have changed — update today counter
     postSettingsResult(true);
@@ -244,6 +319,7 @@
     const body = r.data || {};
     if (body.error) { postSettingsResult(false, body.message || body.error); return; }
     sidebarState.settings = body;
+    await loadAutopilotSettings();  // refresh so markScoreBadges uses new threshold immediately
     publishStateToSidebar();
     refreshDashboard();
     postSettingsResult(true);
@@ -347,6 +423,8 @@
       if (name) applyPresetViaApi(name);
     } else if (data.type === "event.add") {
       addEventViaApi(data.payload || {});
+    } else if (data.type === "score.run") {
+      runMatchScoreViaApi();
     } else if (data.type === "sidebar.close") {
       const container = document.getElementById(SIDEBAR_CONTAINER_ID);
       const toggle    = document.getElementById("tally-sidebar-toggle");
@@ -364,6 +442,10 @@
   let autopilotRunning = false;
   let autopilotAbort = false;
   let savedIds = new Set(); // job_ids already in vault
+  // Map<job_id, score_dict | null>
+  // null means "we fetched but the backend returned no_score"
+  // absent key means "we haven't checked yet"
+  const scoresCache = new Map();
 
   // ── API proxy via background (avoids MV3 CORS quirks) ───────────
 
@@ -479,6 +561,119 @@
         if (already) already.remove();
       }
     }
+  }
+
+  // ── match-score badges on list cards ─────────────────────────────
+
+  function _scoreTier(pct) {
+    if (pct >= 85) return "strong";
+    if (pct >= 60) return null;    // default orange — omit data-tier attribute
+    if (pct >= 40) return "weak";
+    return "poor";
+  }
+
+  function markScoreBadges() {
+    if (!isJobListPage()) return;
+    const threshold = (autopilotSettings && typeof autopilotSettings.match_threshold === "number")
+      ? autopilotSettings.match_threshold : 80;
+    const cards = document.querySelectorAll(
+      '[data-occludable-job-id], ' +
+      '.job-card-container, ' +
+      '.jobs-search-results__list-item, ' +
+      'li.scaffold-layout__list-item'
+    );
+    for (const card of cards) {
+      let id = card.dataset ? card.dataset.occludableJobId : null;
+      if (!id) {
+        const a = card.querySelector('a[href*="/jobs/view/"]');
+        if (a) id = jobIdFromUrl(a.href);
+      }
+      if (!id) continue;
+
+      const existing = card.querySelector(".tally-score-badge");
+
+      if (!scoresCache.has(id)) {
+        // Not yet fetched — leave card untouched
+        continue;
+      }
+
+      const score = scoresCache.get(id);
+      if (!score) {
+        // We fetched but got no_score — remove any stale badge and dim state
+        if (existing) existing.remove();
+        card.classList.remove("tally-card-below-threshold");
+        continue;
+      }
+
+      const pct = Math.round(score.match_pct);
+      const tier = _scoreTier(pct);
+      const belowThreshold = pct < threshold;
+
+      // Apply / remove below-threshold dim on the card
+      if (belowThreshold) {
+        card.classList.add("tally-card-below-threshold");
+      } else {
+        card.classList.remove("tally-card-below-threshold");
+      }
+
+      if (existing) {
+        // Update in place if anything changed
+        existing.textContent = `Tally ${pct}%`;
+        if (tier) {
+          existing.dataset.tier = tier;
+        } else {
+          existing.removeAttribute("data-tier");
+        }
+        if (belowThreshold) {
+          existing.dataset.belowThreshold = "true";
+        } else {
+          existing.removeAttribute("data-below-threshold");
+        }
+      } else {
+        const badge = document.createElement("span");
+        badge.className = "tally-score-badge";
+        badge.textContent = `Tally ${pct}%`;
+        if (tier) {
+          badge.dataset.tier = tier;
+        }
+        if (belowThreshold) {
+          badge.dataset.belowThreshold = "true";
+        }
+        card.appendChild(badge);
+      }
+    }
+  }
+
+  async function refreshCachedScoresForVisibleCards() {
+    const cards = document.querySelectorAll(
+      '[data-occludable-job-id], ' +
+      '.job-card-container, ' +
+      '.jobs-search-results__list-item, ' +
+      'li.scaffold-layout__list-item'
+    );
+    const newIds = [];
+    for (const card of cards) {
+      let id = card.dataset ? card.dataset.occludableJobId : null;
+      if (!id) {
+        const a = card.querySelector('a[href*="/jobs/view/"]');
+        if (a) id = jobIdFromUrl(a.href);
+      }
+      if (!id) continue;
+      if (!scoresCache.has(id)) newIds.push(id);
+    }
+    for (const jid of newIds) {
+      // Fire-and-forget per id; cache deduplicates repeat calls
+      apiGet(`/api/score/${encodeURIComponent(jid)}/cached`)
+        .then((r) => {
+          if (r.ok && r.data && !r.data.error) {
+            scoresCache.set(jid, r.data);
+          } else {
+            scoresCache.set(jid, null);
+          }
+          markScoreBadges();
+        });
+    }
+    markScoreBadges();
   }
 
   // ── DOM extraction (scoped to detail panel) ──────────────────────
@@ -742,6 +937,25 @@
 
   function urlWithStart(n) {
     const u = new URL(location.href);
+    // Strip transient params LinkedIn (or the user) sometimes injects
+    // mid-session. If we don't drop these before pushState, the next
+    // page URL becomes e.g. `?start=25&refresh=true&currentJobId=42…`,
+    // which makes LinkedIn's SPA re-render the result list right when
+    // autopilot is mid-flight: the DOM nodes in `pending` detach, every
+    // subsequent click hits a stale node, save attempts fail silently,
+    // and autopilot looks "hung" for 10+ minutes until consecutiveEmpty
+    // hits 2 and it stops. (Bug seen 2026-04-27 with the
+    // `?refresh=true&currentJobId=4399796203` URL.)
+    //   - refresh=true       → LinkedIn refresh button / session refresh
+    //   - currentJobId=N     → which card is highlighted; autopilot
+    //                          picks its own from the list
+    //   - origin=…           → entry-path tag; irrelevant after page 1
+    //   - discoveryOrigin=…  → same kind of tag for /jobs/collections/
+    //                          (e.g. JOBS_HOME_JYMBII); seen 2026-04-27
+    //                          on /jobs/collections/recommended/
+    ["refresh", "currentJobId", "origin", "discoveryOrigin"].forEach((p) =>
+      u.searchParams.delete(p)
+    );
     u.searchParams.set("start", String(n));
     return u.toString();
   }
@@ -1050,6 +1264,7 @@
   async function onPageUpdate() {
     await refreshSavedIds();
     markSavedCards();
+    refreshCachedScoresForVisibleCards();
     renderActionButton();
     maybeAutoSaveCurrentView();
   }
@@ -1114,9 +1329,28 @@
       // LinkedIn re-renders the list (was previously gated behind the
       // 1.2s observer debounce and silently lost badges on fast nav).
       markSavedCards();
+      refreshCachedScoresForVisibleCards();
       if (/\/(jobs|company|in)\//.test(location.href)) {
         publishPageContext();
         maybeAutoSaveCurrentView();
+        // On list pages the in-memory savedIds set goes stale between
+        // the 20s periodic syncs (e.g. user saved vacancies in another
+        // tab / browser session). Refresh from server, then re-mark
+        // SEVERAL times — LinkedIn lazy-renders the card list in waves
+        // (fast network: ~150ms; slow network: 1-2s), and a single mark
+        // at 80ms post-nav often hits an empty DOM. Reported 2026-04-27
+        // on /jobs/collections/recommended/: badges only appeared after
+        // F5 because the original single mark + 1.2s observer debounce
+        // missed the window between cards arriving and the heartbeat.
+        if (isJobListPage()) {
+          refreshSavedIds().then(() => {
+            // Stagger marks while cards are likely still arriving.
+            markSavedCards();
+            setTimeout(markSavedCards, 300);
+            setTimeout(markSavedCards, 900);
+            setTimeout(markSavedCards, 1800);
+          });
+        }
       } else {
         publishPageContext();
       }
@@ -1160,7 +1394,11 @@
       publishPageContext();
     }
   }, 2000);
-  // Re-sync periodically in case the vault changes server-side
-  setInterval(refreshSavedIds, 60000);
+  // Re-sync periodically in case the vault changes server-side. 20s
+  // matches the user's "I just saved this in another tab and the badge
+  // didn't appear here" pain point; the URL-change handler also kicks
+  // a refresh on list-page navigation, so this interval is the floor,
+  // not the only signal.
+  setInterval(refreshSavedIds, 20000);
   setInterval(refreshDashboard, 60000);
 })();

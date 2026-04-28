@@ -209,3 +209,164 @@ def test_env_overrides_vault_and_data_dirs(tmp_path, monkeypatch):
         monkeypatch.delenv("JOB_MINER_VAULT_DIR", raising=False)
         monkeypatch.delenv("JOB_MINER_DATA_DIR", raising=False)
         importlib.reload(config)
+
+
+# ---------------------------------------------------------------------------
+# Profile load / save / merge / validation
+# ---------------------------------------------------------------------------
+
+def test_load_profile_returns_minimal_when_no_file(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "PROFILE_FILE", tmp_path / "profile.yml")
+    # Also make career-ops fallback disappear
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", tmp_path / "no-such-ref.yml")
+    p = config.load_profile()
+    assert isinstance(p, dict)
+    assert "candidate" in p
+
+
+def test_load_profile_reads_written_file(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "PROFILE_FILE", tmp_path / "profile.yml")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    (tmp_path / "profile.yml").write_text(
+        "candidate:\n  full_name: Test User\ncompensation:\n  target_range: '€60K'\n",
+        encoding="utf-8",
+    )
+    p = config.load_profile()
+    assert p["candidate"]["full_name"] == "Test User"
+    assert p["compensation"]["target_range"] == "€60K"
+
+
+def test_save_profile_merges_and_persists(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "PROFILE_FILE", tmp_path / "profile.yml")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", tmp_path / "no-such-ref.yml")
+    # First save
+    result = config.save_profile({"candidate": {"full_name": "Alice"}, "compensation": {"target_range": "€70K"}})
+    assert result["candidate"]["full_name"] == "Alice"
+    # Second save merges (does not wipe unrelated keys)
+    result2 = config.save_profile({"compensation": {"currency": "EUR"}})
+    assert result2["candidate"]["full_name"] == "Alice"
+    assert result2["compensation"]["target_range"] == "€70K"
+    assert result2["compensation"]["currency"] == "EUR"
+    # Persisted
+    reload = config.load_profile()
+    assert reload["candidate"]["full_name"] == "Alice"
+
+
+def test_validate_profile_rejects_non_string_target_range(tmp_path, monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "PROFILE_FILE", tmp_path / "profile.yml")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", tmp_path / "no-such-ref.yml")
+    with pytest.raises(ValueError, match="target_range"):
+        config.save_profile({"compensation": {"target_range": 70000}})
+
+
+def test_save_profile_uses_career_ops_ref_as_merge_base(tmp_path, monkeypatch):
+    """save_profile should load _CAREER_OPS_PROFILE as the merge base (when
+    PROFILE_FILE doesn't exist yet), apply the patch on top, write to
+    PROFILE_FILE, and leave _CAREER_OPS_PROFILE untouched."""
+    import yaml
+    import config
+
+    ref_profile_path = tmp_path / "ref-profile.yml"
+    profile_file_path = tmp_path / "profile.yml"
+
+    # Write a known reference profile
+    ref_data = {
+        "candidate": {"full_name": "Test User", "location": "Lisbon"},
+        "narrative": {"headline": "Senior Engineer"},
+        "compensation": {"currency": "EUR"},
+    }
+    ref_profile_path.write_text(
+        yaml.dump(ref_data, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", ref_profile_path)
+    monkeypatch.setattr(config, "PROFILE_FILE", profile_file_path)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+
+    # PROFILE_FILE does not exist yet — merge base must come from _CAREER_OPS_PROFILE
+    assert not profile_file_path.exists()
+
+    result = config.save_profile({"compensation": {"target_range": "€60K"}})
+
+    # Patched field present
+    assert result["compensation"]["target_range"] == "€60K"
+    # Reference fields also present (merge base was loaded correctly)
+    assert result["candidate"]["full_name"] == "Test User"
+    assert result["narrative"]["headline"] == "Senior Engineer"
+    # PROFILE_FILE was created
+    assert profile_file_path.exists()
+    # _CAREER_OPS_PROFILE was NOT modified (reference stays clean)
+    ref_reload = yaml.safe_load(ref_profile_path.read_text(encoding="utf-8"))
+    assert "target_range" not in ref_reload.get("compensation", {})
+
+
+# ---------------------------------------------------------------------------
+# match_threshold settings
+# ---------------------------------------------------------------------------
+
+def test_default_settings_includes_match_threshold(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    s = config._default_settings()
+    assert s["match_threshold"] == 80
+
+
+def test_save_settings_rejects_invalid_match_threshold(tmp_path, monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    # Out-of-range integer
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": 150})
+    # Negative
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": -5})
+    # Wrong type
+    with pytest.raises(ValueError, match="match_threshold"):
+        config.save_settings({"match_threshold": "high"})
+
+
+def test_apply_preset_sets_match_threshold(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    assert config.apply_preset("stealth")["match_threshold"] == 85
+    assert config.apply_preset("regular")["match_threshold"] == 80
+    assert config.apply_preset("fast")["match_threshold"] == 70
+
+
+def test_effective_threshold_respects_user_setting(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    config.save_settings({"match_threshold": 65})
+    assert config.effective_threshold() == 65
+
+
+def test_append_and_load_score(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SCORES_FILE", tmp_path / "scores.jsonl")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    score = {"match_pct": 85, "summary": "Good fit", "skills": [], "gaps": []}
+    config.append_score("42", score)
+    config.append_score("42", {**score, "match_pct": 90})  # newer, should win
+    config.append_score("99", {**score, "match_pct": 50})
+    result = config.load_score("42")
+    assert result is not None
+    assert result["match_pct"] == 90
+    assert result["job_id"] == "42"
+    assert "cached_at" in result
+    # Different job not affected
+    assert config.load_score("99")["match_pct"] == 50
+    # Unknown job returns None
+    assert config.load_score("9999") is None

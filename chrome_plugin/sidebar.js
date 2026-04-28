@@ -20,6 +20,16 @@
   const companyCount     = document.getElementById("tally-company-count");
   const companyEmpty     = document.getElementById("tally-company-empty");
 
+  // Match section refs
+  const matchSection     = document.getElementById("tally-match-section");
+  const matchPct         = document.getElementById("tally-match-pct");
+  const matchSummary     = document.getElementById("tally-match-summary");
+  const matchSkills      = document.getElementById("tally-match-skills");
+  const matchGapsWrap    = document.getElementById("tally-match-gaps-wrap");
+  const matchGapsList    = document.getElementById("tally-match-gaps");
+  const scoreBtn         = document.getElementById("tally-score-btn");
+  const matchMsg         = document.getElementById("tally-match-msg");
+
   // Timeline refs
   const timelineSection  = document.getElementById("tally-timeline-section");
   const timelineList     = document.getElementById("tally-timeline-list");
@@ -36,11 +46,13 @@
   const dailyCapInput    = document.getElementById("tally-daily-cap-input");
   const dailyCapUnlimitedBox = document.getElementById("tally-daily-cap-unlimited");
   const randomizeBox     = document.getElementById("tally-randomize");
-  const settingsSaveBtn  = document.getElementById("tally-settings-save");
+  const matchThresholdInput = document.getElementById("tally-match-threshold-input");
+  const matchThresholdValue = document.getElementById("tally-match-threshold-value");
   const settingsMsg      = document.getElementById("tally-settings-msg");
 
   let settingsOpen = false;
   let lastPageMode = "other";  // remembered so closing settings restores the right section
+  let _currentThreshold = 80;
 
   function applyState(payload) {
     // API status dot
@@ -79,6 +91,14 @@
     // Progress text
     progressEl.textContent = payload.autopilotProgress || "";
 
+    // Settings form content — populate whenever content.js pushes
+    // fresh settings. Update _currentThreshold BEFORE applyMatch so
+    // the muted-pct visual uses the latest threshold on every render.
+    if (payload.settings) {
+      applySettingsForm(payload.settings);
+      _currentThreshold = payload.settings.match_threshold ?? 80;
+    }
+
     // Page-aware sections. View pages show Save, list pages show
     // Autopilot; settings panel (if open) appears beneath them — they
     // all stay accessible at the same time.
@@ -93,12 +113,15 @@
     const job = payload.currentJob;
     if (job && job.jobId) {
       vacancySection.classList.remove("tally-hidden");
+      matchSection.classList.remove("tally-hidden");
       timelineSection.classList.remove("tally-hidden");
       vacancyTitle.textContent = job.title || "Loading…";
       applySaveButton(job, payload.saveStatus);
+      applyMatch(payload.matchScore);
       applyTimeline(payload.timeline || []);
     } else {
       vacancySection.classList.add("tally-hidden");
+      matchSection.classList.add("tally-hidden");
       timelineSection.classList.add("tally-hidden");
     }
     if (mode === "list") {
@@ -114,10 +137,6 @@
     } else {
       companySection.classList.add("tally-hidden");
     }
-
-    // Settings form content — populate whenever content.js pushes
-    // fresh settings. Harmless when the panel is closed.
-    if (payload.settings) applySettingsForm(payload.settings);
   }
 
   function applySettingsForm(s) {
@@ -135,13 +154,22 @@
       dailyCapInput.value = String(s.daily_cap);
     }
     randomizeBox.checked = Boolean(s.randomize_delays);
+    const thr = s.match_threshold ?? 80;
+    matchThresholdInput.value = String(thr);
+    matchThresholdValue.textContent = thr + "%";
   }
 
   function collectSettingsFromForm() {
     const unlimited = dailyCapUnlimitedBox.checked;
     const rawCap = parseInt(dailyCapInput.value, 10);
     const dailyCap = unlimited ? null : (Number.isFinite(rawCap) ? rawCap : undefined);
-    const payload = { randomize_delays: randomizeBox.checked, mode: "custom" };
+    const rawThr = parseInt(matchThresholdInput.value, 10);
+    const matchThreshold = Number.isFinite(rawThr) ? rawThr : undefined;
+    const payload = {
+      randomize_delays: randomizeBox.checked,
+      mode: "custom",
+    };
+    if (matchThreshold !== undefined) payload.match_threshold = matchThreshold;
     if (dailyCap !== undefined) payload.daily_cap = dailyCap;
     return payload;
   }
@@ -237,6 +265,97 @@
     }
   }
 
+  function applyMatch(score) {
+    // score: null | {error, message?, raw?} | {working: true} | {match_pct, summary, skills, gaps, cached_at}
+    matchSkills.innerHTML = "";
+    matchGapsList.innerHTML = "";
+    matchGapsWrap.classList.add("tally-hidden");
+
+    if (!score) {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Score this vacancy";
+      scoreBtn.disabled = false;
+      matchMsg.textContent = "";
+      return;
+    }
+    if (score.working) {
+      matchPct.textContent = "…";
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Scoring…";
+      scoreBtn.disabled = true;
+      matchMsg.textContent = "Asking Gemini…";
+      return;
+    }
+    if (score.error === "no_api_key") {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Score this vacancy";
+      scoreBtn.disabled = true;
+      matchMsg.textContent = "Set GOOGLE_API_KEY in .env to enable scoring";
+      return;
+    }
+    if (score.error) {
+      matchPct.textContent = "—";
+      matchPct.removeAttribute("data-tier");
+      matchSummary.textContent = "";
+      scoreBtn.textContent = "Retry score";
+      scoreBtn.disabled = false;
+      matchMsg.textContent = score.message || score.error;
+      return;
+    }
+    // Successful score
+    const pct = Math.max(0, Math.min(100, Math.round(score.match_pct || 0)));
+    matchPct.textContent = pct + "%";
+    if (pct >= 85) matchPct.dataset.tier = "strong";
+    else if (pct >= 60) matchPct.removeAttribute("data-tier");
+    else if (pct >= 40) matchPct.dataset.tier = "weak";
+    else matchPct.dataset.tier = "poor";
+    if (pct < _currentThreshold) {
+      matchPct.classList.add("tally-pct-below");
+    } else {
+      matchPct.classList.remove("tally-pct-below");
+    }
+    matchSummary.textContent = score.summary || "";
+    scoreBtn.textContent = "Re-score";
+    scoreBtn.disabled = false;
+    matchMsg.textContent = "";
+    // Skills
+    for (const s of (score.skills || [])) {
+      const li = document.createElement("li");
+      li.className = "tally-match-skill";
+      const w = Math.max(0, Math.min(1, Number(s.weight) || 0));
+      li.innerHTML = `
+        <span class="tally-match-skill-name"></span>
+        <span class="tally-match-skill-pct">${Math.round(w * 100)}%</span>
+        <span class="tally-match-skill-bar"><span class="tally-match-skill-bar-fill" style="width:${(w * 100).toFixed(0)}%"></span></span>
+      `;
+      li.querySelector(".tally-match-skill-name").textContent = s.name || "";
+      if (s.evidence) {
+        const ev = document.createElement("div");
+        ev.className = "tally-match-skill-evidence";
+        ev.textContent = s.evidence;
+        li.appendChild(ev);
+      }
+      matchSkills.appendChild(li);
+    }
+    // Gaps
+    const gaps = score.gaps || [];
+    if (gaps.length) {
+      matchGapsWrap.classList.remove("tally-hidden");
+      for (const g of gaps) {
+        const li = document.createElement("li");
+        const sev = (g.severity === "hard" ? "hard" : "soft");
+        li.innerHTML = `<span class="tally-match-gap-severity" data-severity="${sev}">${sev}</span>`;
+        const text = document.createTextNode((g.name || "") + (g.mitigation ? " — " + g.mitigation : ""));
+        li.appendChild(text);
+        matchGapsList.appendChild(li);
+      }
+    }
+  }
+
   function applySaveButton(job, status) {
     saveBtn.classList.remove("tally-btn-running", "tally-btn-saved", "tally-btn-exists");
     saveMsg.textContent = "";
@@ -296,6 +415,10 @@
     window.parent.postMessage({ from: "tally-sidebar", type: "job.save" }, "*");
   });
 
+  scoreBtn.addEventListener("click", () => {
+    window.parent.postMessage({ from: "tally-sidebar", type: "score.run" }, "*");
+  });
+
   eventAddBtn.addEventListener("click", () => {
     const kind = eventKindSelect.value;
     const note = eventNoteInput.value.trim();
@@ -314,10 +437,51 @@
 
   gearBtn.addEventListener("click", () => toggleSettings(!settingsOpen));
 
+  // ── Auto-save settings on change ────────────────────────────────
+  // Earlier UX required hitting "Save settings" after every tweak. The
+  // Unlimited checkbox in particular felt broken — it greyed out the
+  // input but didn't persist, so users (rightly) expected an immediate
+  // effect and got none. Treating each settings field as a stateful
+  // toggle that auto-persists matches every other modern settings UI
+  // (Notion / Slack / Linear). The explicit Save button stays as a
+  // belt-and-suspenders fallback. Localhost API is free, so the extra
+  // POST per click is fine.
+  function saveSettingsAuto() {
+    const payload = collectSettingsFromForm();
+    settingsMsg.textContent = "Saving…";
+    window.parent.postMessage(
+      { from: "tally-sidebar", type: "settings.save", payload },
+      "*"
+    );
+  }
+
   dailyCapUnlimitedBox.addEventListener("change", () => {
     dailyCapInput.disabled = dailyCapUnlimitedBox.checked;
-    if (dailyCapUnlimitedBox.checked) dailyCapInput.value = "";
+    if (dailyCapUnlimitedBox.checked) {
+      dailyCapInput.value = "";
+    } else if (!dailyCapInput.value) {
+      // User just unchecked Unlimited but the input is empty — without
+      // a value, collectSettingsFromForm() resolves daily_cap to
+      // `undefined`, the merge-patch backend doesn't touch the
+      // null-stored cap, and the next applyState() re-checks the box
+      // because daily_cap is still null on disk. Pre-fill a sane
+      // default so the unsave actually persists. 600 = the Regular
+      // preset's cap.
+      dailyCapInput.value = "600";
+    }
+    saveSettingsAuto();
   });
+
+  // `change` (not `input`) fires once on blur for text inputs and on
+  // mouseup for sliders — avoids spamming the API while the user types
+  // a digit at a time or drags the slider.
+  dailyCapInput.addEventListener("change", saveSettingsAuto);
+  randomizeBox.addEventListener("change", saveSettingsAuto);
+
+  matchThresholdInput.addEventListener("input", () => {
+    matchThresholdValue.textContent = matchThresholdInput.value + "%";
+  });
+  matchThresholdInput.addEventListener("change", saveSettingsAuto);
 
   presetBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -331,14 +495,10 @@
     });
   });
 
-  settingsSaveBtn.addEventListener("click", () => {
-    const payload = collectSettingsFromForm();
-    settingsMsg.textContent = "Saving…";
-    window.parent.postMessage(
-      { from: "tally-sidebar", type: "settings.save", payload },
-      "*"
-    );
-  });
+  // (No explicit "Save settings" button — every settings field auto-saves
+  // on change via saveSettingsAuto. The button was a UX trap: clicking it
+  // after a change just re-saved the same state, with no visible diff
+  // beyond a brief "Saved ✓" flash, which read as "nothing happened.")
 
   // Signal readiness — content.js will respond with a "state" message
   window.parent.postMessage({ from: "tally-sidebar", type: "sidebar.ready" }, "*");

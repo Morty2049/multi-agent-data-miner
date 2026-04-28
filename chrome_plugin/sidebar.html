@@ -37,6 +37,21 @@
     <p id="tally-save-msg" class="tally-progress-text"></p>
   </section>
 
+  <section id="tally-match-section" class="tally-match tally-hidden">
+    <div class="tally-match-head">
+      <span class="tally-settings-label">Match</span>
+      <span id="tally-match-pct" class="tally-match-pct">—</span>
+    </div>
+    <p id="tally-match-summary" class="tally-match-summary"></p>
+    <ul id="tally-match-skills" class="tally-match-skills"></ul>
+    <details class="tally-match-gaps tally-hidden" id="tally-match-gaps-wrap">
+      <summary>Gaps</summary>
+      <ul id="tally-match-gaps"></ul>
+    </details>
+    <button id="tally-score-btn" class="tally-secondary-btn">Score this vacancy</button>
+    <p id="tally-match-msg" class="tally-progress-text"></p>
+  </section>
+
   <section id="tally-timeline-section" class="tally-timeline tally-hidden">
     <div class="tally-timeline-head">
       <span class="tally-settings-label">Application timeline</span>
@@ -109,7 +124,14 @@
       <span>Randomise delays</span>
     </label>
 
-    <button id="tally-settings-save" class="tally-primary-btn">Save settings</button>
+    <label class="tally-settings-row" for="tally-match-threshold-input">
+      <span class="tally-settings-label">Match threshold</span>
+      <span id="tally-match-threshold-value" class="tally-mode-badge">80%</span>
+    </label>
+    <input type="range" id="tally-match-threshold-input" min="0" max="100" step="5" value="80" class="tally-range" />
+    <p class="tally-settings-hint">Below threshold → cards dimmed in lists, score muted in the sidebar.</p>
+
+    <p class="tally-settings-hint">Settings save automatically as you change them.</p>
     <p id="tally-settings-msg" class="tally-progress-text"></p>
   </section>
 

@@ -56,6 +56,9 @@ def isolated_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "RATE_LIMIT_FILE", data / "rate_limit.json")
     monkeypatch.setattr(config, "SETTINGS_FILE", data / "settings.json")
     monkeypatch.setattr(config, "EVENTS_FILE", data / "events.jsonl")
+    monkeypatch.setattr(config, "PROFILE_FILE", data / "profile.yml")
+    monkeypatch.setattr(config, "SCORES_FILE", data / "scores.jsonl")
+    monkeypatch.setattr(config, "_CAREER_OPS_PROFILE", tmp_path / "no-ref-profile.yml")
 
     monkeypatch.setattr(srv, "VAULT", vault)
     monkeypatch.setattr(srv, "DATA", data)
