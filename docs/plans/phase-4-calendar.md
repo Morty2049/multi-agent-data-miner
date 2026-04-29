@@ -102,7 +102,7 @@ A `test_task` deadline is a real calendar event (the user is given "submit by Fr
 
 ### Why this and not the alternatives
 - **Vs. coloured pills on LinkedIn list cards:** that needs the content script to query `/api/events?upcoming=…` on every list-render and survive LinkedIn's virtualisation. Doable, but the user only sees it while on `/jobs/search/*`. Phase 4 should still warn when the user is on a vacancy page or a company page or just opened the sidebar to triage.
-- **Vs. dedicated "Upcoming" page/route:** the sidebar is already cramped; adding a navigation hierarchy is Phase 5 / "saved searches" territory.
+- **Vs. dedicated "Upcoming" page/route:** the sidebar is already cramped; adding a navigation hierarchy is Phase 7 / "saved searches" territory.
 - **Vs. only the stat card:** a single number is too coy. The user needs to see *which interview is tomorrow* without clicking. The compact list under the cards is three lines max (we cap at the next 3, with a "more →" footer if `count > 3`) and only renders if any future event exists.
 - **The "Today" card is replaceable without loss:** "parsed today / cap" is already shown in the rate banner, and the autopilot button area surfaces remaining capacity. No information lost.
 
@@ -215,5 +215,5 @@ Specifically:
 2. **Localhost CORS for ICS:** Calendar.app fetches `webcal://` outside the browser, so CORS isn't an issue, but if any browser-side preview ever wants the feed we need to confirm `text/calendar` doesn't trip the existing wildcard CORS middleware.
 3. **Timezone gotcha:** if the user travels and their browser switches tz while a scheduled event already exists, the stored `event_at` (with offset) is still correct — Calendar.app re-renders in the new tz. We should write a single test to lock this in.
 4. **`uvicorn --reload` + ICS subscription cache:** Calendar.app caches subscription content for several minutes; during dev the user may be confused by stale data. Worth one line in the README ("if you don't see your event, force-refresh in Calendar → File → Refresh Calendars").
-5. **Should `note` be visible in `DESCRIPTION` for screening calls?** The note may contain a recruiter's name and we're now publishing it via a feed. Localhost-only mitigates the leak, but if Phase 5 ever hosts the feed remotely we'll want a "private" toggle on individual events. Punt to Phase 5.
-6. **Per-event delete for typos:** Phase 4 stays append-only (consistent with Phase 2) — to fix a wrong date the user adds a new event. If this becomes annoying in practice, a "supersedes" field on later events is a simpler change than introducing tombstones. Track for Phase 5 if user reports it.
+5. **Should `note` be visible in `DESCRIPTION` for screening calls?** The note may contain a recruiter's name and we're now publishing it via a feed. Localhost-only mitigates the leak, but if Phase 7 ever hosts the feed remotely we'll want a "private" toggle on individual events. Punt to Phase 7.
+6. **Per-event delete for typos:** Phase 4 stays append-only (consistent with Phase 2) — to fix a wrong date the user adds a new event. If this becomes annoying in practice, a "supersedes" field on later events is a simpler change than introducing tombstones. Track for Phase 7 if user reports it.

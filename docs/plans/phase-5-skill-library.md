@@ -1,4 +1,4 @@
-# Phase 6 — Skill ontology + search-based match scoring
+# Phase 5 — Skill library (ontology + search-based match scoring)
 
 **Status:** Draft (planning only — not yet greenlit)
 **Predecessor:** Phase 3 LLM match-scoring (`chrome_plugin/scoring.py`, ADR 0002)
@@ -15,15 +15,15 @@
 - Keep all storage **append-only / regenerable** so a bad ontology build never corrupts the vault.
 
 ### Non-goals (deferred / out of scope)
-- **Replacing Phase 3.** The Gemini-Flash engine, prompt, cache, and threshold UI all stay. Phase 6 sits *before* it in the call graph and turns Phase 3 into a button instead of an automatic call.
+- **Replacing Phase 3.** The Gemini-Flash engine, prompt, cache, and threshold UI all stay. Phase 5 sits *before* it in the call graph and turns Phase 3 into a button instead of an automatic call.
 - **Re-running ontology on every settings change.** Build is offline (script or button), query is live. The query path never blocks on a rebuild.
 - **Multi-language ontology.** ~5% of the vault is Portuguese / Spanish / French JDs (LinkedIn-Lisbon reality). v1 indexes English-language descriptions only; non-English JDs fall through to the LLM path unchanged.
-- **Ontology as a UX surface in v1.** Skills in Obsidian get markdown files but no in-extension browser. The Phase 6 sidebar shows a list of matched + missing atoms only.
+- **Ontology as a UX surface in v1.** Skills in Obsidian get markdown files but no in-extension browser. The Phase 5 sidebar shows a list of matched + missing atoms only.
 - **Cross-user / shared ontology.** Each Tally checkout owns its own ontology, the same way each owns its own vault.
 
 ---
 
-## 2. Empirical pre-flight (Slice 6.1, gate)
+## 2. Empirical pre-flight (Slice 5.1, gate)
 
 Before any code that lives in `chrome_plugin/`, prove that the corpus is dense enough for clustering to converge. The earlier (retired) `legacy/skills_miner_adk.py` attempt failed on too few JDs; `obsidian_vault/Vacancies/` now has 1576 markdown files, which is the threshold worth re-testing.
 
@@ -46,8 +46,8 @@ Before any code that lives in `chrome_plugin/`, prove that the corpus is dense e
 - A **profile-roundtrip table**: for each skill the script can plausibly extract from `profile.yml.narrative.superpowers + proof_points`, does it surface in the discovered atom list? Hit / miss / partial.
 
 ### Decision gate
-- **Proceed to Slice 6.2** if ≥ 60% of profile skills surface from the data AND ≥ 70% of the top 200 clusters are coherent on a 5-minute manual scan.
-- **Defer Phase 6** otherwise — write the negative result into the same file and stop. Phase 3 alone keeps shipping. The pre-flight cost is half a day; we accept a "no" as a valid outcome.
+- **Proceed to Slice 5.2** if ≥ 60% of profile skills surface from the data AND ≥ 70% of the top 200 clusters are coherent on a 5-minute manual scan.
+- **Defer Phase 5** otherwise — write the negative result into the same file and stop. Phase 3 alone keeps shipping. The pre-flight cost is half a day; we accept a "no" as a valid outcome.
 
 Why this gate: Aleksei was burned once by building skill extraction prematurely. Half a day of analysis is cheap insurance against a week of building on a corpus that isn't dense enough yet.
 
@@ -140,7 +140,7 @@ VACANCY_SKILLS    = DATA_DIR / "vacancy_skills.jsonl"  # see §4 below
 ### Migration is one-time and idempotent
 A script walks `obsidian_vault/Vacancies/*.md`, runs `extract_skills(description_text)`, writes `skills: [...]` into the frontmatter if absent. Re-running is a no-op (skip if `skills:` already present and ontology version matches).
 
-The **`skills:` frontmatter mutation** is a real change to existing markdown — that needs to be landed once, after Slice 6.2 has stabilised the ontology. We use the same YAML-quoting safety the recent `fef46e2 fix(parse): YAML-quote free-text fields` commit established.
+The **`skills:` frontmatter mutation** is a real change to existing markdown — that needs to be landed once, after Slice 5.2 has stabilised the ontology. We use the same YAML-quoting safety the recent `fef46e2 fix(parse): YAML-quote free-text fields` commit established.
 
 ---
 
@@ -214,23 +214,23 @@ The `summary` is generated deterministically: "You match {len(matched)}/{len(vac
 
 ## 7. Slicing breakdown
 
-Each slice ships something visible (or, for 6.1, decides whether to ship at all).
+Each slice ships something visible (or, for 5.1, decides whether to ship at all).
 
-### Slice 6.1 — Empirical pre-flight (~½ day)
+### Slice 5.1 — Empirical pre-flight (~½ day)
 - **Files touched:**
   - `scripts/skill_extraction_feasibility.py` — new, one-off.
   - `docs/research/skill-extraction-feasibility.md` + `.json` — new, the actual decision artefact.
-- **User-visible after this slice:** none directly. Decision: proceed to 6.2 or stop.
+- **User-visible after this slice:** none directly. Decision: proceed to 5.2 or stop.
 
-### Slice 6.2 — Build ontology, store as Obsidian + JSON cache (~1 day)
+### Slice 5.2 — Build ontology, store as Obsidian + JSON cache (~1 day)
 - **Files touched:**
   - `chrome_plugin/skill_ontology.py` — new module: `build_ontology`, `load_ontology`, `find_skill`, `linked_skills`.
   - `config.py` — add `SKILLS_DIR`, `ONTOLOGY_CACHE`, `VACANCY_SKILLS` paths.
-  - `scripts/bootstrap_ontology.py` — one-off: takes the 6.1 output, re-bootstraps `obsidian_vault/Skills/` (the legacy 2016 files become the manual-curation seed; we **don't** delete them, we re-index them).
+  - `scripts/bootstrap_ontology.py` — one-off: takes the 5.1 output, re-bootstraps `obsidian_vault/Skills/` (the legacy 2016 files become the manual-curation seed; we **don't** delete them, we re-index them).
   - `tests/test_skill_ontology.py` — new: cache build determinism, synonym resolution, fuzzy match boundary cases, graph traversal.
 - **User-visible:** running `python -m scripts.bootstrap_ontology` produces `data/skills_ontology.json`. Match section is still on Phase 3.
 
-### Slice 6.3 — Per-vacancy skill extraction (~1 day)
+### Slice 5.3 — Per-vacancy skill extraction (~1 day)
 - **Files touched:**
   - `chrome_plugin/skill_ontology.py` — add `extract_skills(description_text) -> list[str]`.
   - `chrome_plugin/api_server.py` — add `POST /api/extract-skills/{job_id}`; wire into the existing parse path so newly-saved vacancies get tagged immediately.
@@ -238,7 +238,7 @@ Each slice ships something visible (or, for 6.1, decides whether to ship at all)
   - `tests/test_skill_extraction.py` — golden-string tests for a known JD → expected atoms.
 - **User-visible:** Obsidian graph view shows JDs linking to Skills. The migration runs once, takes ~5 min, and is reversible (the YAML field is removable; no other state changes).
 
-### Slice 6.4 — Search scoring + sidebar wiring (~1 day)
+### Slice 5.4 — Search scoring + sidebar wiring (~1 day)
 - **Files touched:**
   - `chrome_plugin/scoring_search.py` — new: `score_search(profile, vacancy, ontology) -> dict`, mirrors `scoring.score_vacancy` shape. Same `{match_pct, summary, skills, gaps, engine}` contract.
   - `chrome_plugin/api_server.py::score_job` — try search first, fall through to LLM only on `None` (no atoms) or `?force_llm=1` query param.
@@ -253,7 +253,7 @@ Each slice ships something visible (or, for 6.1, decides whether to ship at all)
 ## 8. Migration plan
 
 ### `obsidian_vault/Skills/` (legacy, 2016 files)
-- Treated as **seed**, not blocker. The pre-flight (6.1) discovers atoms; the bootstrap (6.2) creates / updates markdown for each discovered atom. Existing files with the same slug get their `synonyms`/`parents` merged, not overwritten — manual curation survives.
+- Treated as **seed**, not blocker. The pre-flight (6.1) discovers atoms; the bootstrap (5.2) creates / updates markdown for each discovered atom. Existing files with the same slug get their `synonyms`/`parents` merged, not overwritten — manual curation survives.
 - Files for atoms that the new pipeline doesn't surface (probably hundreds) are left in place but get a `source_count: 0` and `stale: true` in frontmatter. The user can prune by hand later if they care; the runtime ignores them.
 
 ### `obsidian_vault/Vacancies/` (1576 files in main vault)
@@ -262,7 +262,7 @@ Each slice ships something visible (or, for 6.1, decides whether to ship at all)
 - Reversibility: a one-line `awk` removes the `skills:` field if we ever want to back out.
 
 ### `data/scores.jsonl`
-- Existing rows are **kept**. We only add `engine` to **new** rows. A backfill helper `_backfill_engine_field()` runs once on first read after Phase 6 ships and stamps `engine: "gemini-flash"` on rows that lack it. Append-only safety: backfill writes to a temp file then atomic-renames, never partial-overwrites.
+- Existing rows are **kept**. We only add `engine` to **new** rows. A backfill helper `_backfill_engine_field()` runs once on first read after Phase 5 ships and stamps `engine: "gemini-flash"` on rows that lack it. Append-only safety: backfill writes to a temp file then atomic-renames, never partial-overwrites.
 - Schema is forward-compatible: ADR 0002 explicitly didn't pre-commit the cache contract to LLM-only.
 
 ### `data/profile.yml`
@@ -281,6 +281,56 @@ Each slice ships something visible (or, for 6.1, decides whether to ship at all)
 3. **Profile ground-truth is squishy.** `profile.yml.narrative` is prose, not a skills list. The auto-extraction will miss tacit skills ("led cross-functional rollouts" → people-management isn't in the ontology). **Mitigation:** the settings-panel review pass + pinned atoms. Document this as a one-time chore.
 4. **Multi-language vault subset (~5%).** Portuguese/Spanish JDs won't get tagged. **Behaviour:** `vacancy_atoms == set()` → `score_search` returns `None` → sidebar falls through to "Get LLM analysis" automatically. No user-visible regression vs Phase 3.
 5. **When does ontology rebuild fire?** **Proposal:** weekly cron (the user already runs the dev server daily; a `--rebuild-ontology-if-stale` flag on startup, plus an explicit "Rebuild ontology" button in the settings panel). Per-save rebuild is too expensive (5 min); never-rebuild lets IDF weights drift.
-6. **`legacy/skills_miner_adk.py` resurrection?** No. The clustering approach in 6.1 is incompatible with the ADK-agent pattern that file used. Delete after 6.4 lands and the new pipeline is stable for two weeks. Until then, leave it as-is — the worst it can do is sit on disk.
+6. **`legacy/skills_miner_adk.py` resurrection?** No. The clustering approach in 5.1 is incompatible with the ADK-agent pattern that file used. Delete after 5.4 lands and the new pipeline is stable for two weeks. Until then, leave it as-is — the worst it can do is sit on disk.
 7. **Engine field in `data/scores.jsonl` consistency.** What if a user re-scores a JD with `?force_llm=1` after a search-engine score is cached? **Proposal:** both rows persist. `load_score(job_id)` already takes the latest, so the LLM result wins for that JD until the next search-engine re-tag. Distinguishable by `engine` field for debugging.
 8. **Sidebar chip overflow.** A JD with 25 listed atoms blows out the layout. **Proposal:** show top 8 by IDF, "+ N more" toggle. Same pattern as the existing skills/gaps lists.
+
+---
+
+## 10. BYO LLM backends (used in Slice 5.3 extraction)
+
+Slice 5.3's `extract_skills(description_text)` is primarily statistical (noun-phrase + clustering against the ontology built in 5.2). But for ambiguous JDs — short descriptions, heavy domain jargon, or freshly-coined skill names not yet clustered — an LLM refinement pass is the difference between "got 12 atoms" and "got 4 atoms + 8 noise". Aleksei's constraint: he doesn't want Tally locked to one vendor or one billing surface. The same architectural concern applies to Phase 6 scoring.
+
+### Four backends, one seam
+
+The seam already exists: `chrome_plugin/scoring.py::_default_llm(prompt: str) -> str` (introduced for Phase 3 Gemini-Flash). The contract is a string-in-JSON-out callable that tests can mock. Phase 5 reuses the same seam — `extract_skills` accepts an optional `llm=None` parameter; when provided, it asks the LLM to validate / suggest atoms.
+
+| Backend | Cost | Privacy | Setup | Best for |
+|---|---|---|---|---|
+| **Gemini API** (current) | $0.0001/JD | JD text → Google | env `GEMINI_API_KEY` | default; fast |
+| **Claude Desktop via MCP** | free if subscribed | JD → Anthropic | run a Tally MCP server, point Claude Desktop at it | users who already have Claude desktop and want zero extra credit cost |
+| **Ollama (local)** | free | fully local | `ollama pull llama3.2`, configure base URL | privacy-sensitive users; offline |
+| **OpenAI / generic** | varies | JD → OpenAI | env `OPENAI_API_KEY`, model name | users with an existing OpenAI plan |
+
+### Implementation
+
+- `chrome_plugin/llm_backends.py` (new module) — registers each backend behind the same `(prompt: str) -> str` contract.
+- `chrome_plugin/config.py` — settings schema gets `llm_backend: "gemini" | "claude_mcp" | "ollama" | "openai" | "none"` and per-backend config (model name, base URL, env-var pointer).
+- `chrome_plugin/sidebar.html` — gear panel adds a `Scoring engine` dropdown with the 5 options. `none` disables LLM extraction entirely (pure statistical, the original 5.3 default).
+- `chrome_plugin/sidebar.js` — auto-saves like other settings.
+- `chrome_plugin/scoring.py` + `chrome_plugin/skill_ontology.py` — both delegate to `llm_backends.resolve(settings)` instead of the hardcoded `_default_llm`.
+
+### MCP backend specifics
+
+Tally exposes a small MCP server (`chrome_plugin/mcp_server.py`) with tools `tally.score_vacancy(...)` and `tally.extract_skills(...)`. Claude Desktop is configured (one-line user paste) to connect to it. When the user sets `llm_backend = "claude_mcp"`, the score-button trigger from the sidebar:
+
+1. Posts to `/api/score/{job_id}` like always
+2. Backend sees `llm_backend = "claude_mcp"` → instead of calling Gemini, writes a "score request" file under `data/mcp_inbox/{job_id}.json`
+3. Claude Desktop polls `tally.list_pending()` → picks up the request → calls `tally.return_score(job_id, score_json)`
+4. Backend writes to `data/scores.jsonl` and pushes to the sidebar via the existing `score.result` channel
+
+This is round-trippy compared to direct API calls but it's free for the user and trivial to wire if they already have Claude Desktop running. v1 may polling-based; an event-driven version waits until MCP gets a streaming spec.
+
+### Ollama backend specifics
+
+Pure HTTP → `http://localhost:11434/api/generate`. Tally treats the response as untrusted — runs the same JSON parse + retry path the Gemini backend uses, with one additional fallback: if the local model returns non-JSON twice, give up and fall through to statistical-only extraction. Document a recommended model (`llama3.2:3b` for fast, `llama3.1:8b` for better) and a 3-line setup in the README.
+
+### Why this isn't its own phase
+
+Originally I proposed BYO LLM as Phase 7. After thinking it through, it's better as a cross-cutting concern landed inside Phases 5 and 6 — the seam already exists, the cost of dragging it into a separate "phase" is mostly ceremony. Both LLM-using slices in this and the resume-matching plan get the same `llm_backends` module; if either ships first, the other gets it for free.
+
+### Slicing inside Phase 5
+
+- The settings dropdown + `llm_backends` skeleton lands as **part of Slice 5.3**, gated behind a default of `gemini` so existing flows don't change.
+- Ollama + OpenAI backends ship as adapters in **Slice 5.4** (the same slice that wires search-scoring, since that's the natural moment to revisit the engine question).
+- MCP backend ships as a follow-up post-5.4 once the contract is stable; track as 5.5 if scope warrants it, otherwise as a small follow-up PR.

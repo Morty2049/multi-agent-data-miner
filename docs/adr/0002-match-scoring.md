@@ -146,11 +146,11 @@ hover unsticks the opinion in one gesture.
 
 **Future-affecting**
 
-- When Phase 6 adds skill-extraction LLM calls, that pipeline will
+- When Phase 5 adds skill-extraction LLM calls, that pipeline will
   reuse the same lazy-import + LLM-seam pattern from `scoring.py`.
 - The score cache in `data/scores.jsonl` will likely grow to include
   skill-extraction output. This ADR does **not** pre-commit to that
-  schema — Phase 6 owns its own cache contract.
+  schema — Phase 5 owns its own cache contract.
 
 ## Implementation references
 
